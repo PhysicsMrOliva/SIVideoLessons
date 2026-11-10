@@ -1,5 +1,8 @@
 (function () {
   const cfg = window.APP_CONFIG;
+  // Several teachers can share one site: ?t=name picks that teacher's backend.
+  cfg.TEACHER_KEY = new URLSearchParams(location.search).get('t') || cfg.DEFAULT_TEACHER || '';
+  if (cfg.TEACHERS) cfg.API_URL = cfg.TEACHERS[cfg.TEACHER_KEY];
   window.Auth = { token: null, profile: null };
   let pendingAuth = null;
 
@@ -46,6 +49,7 @@
   function hideReauth() { const m = document.getElementById('reauth'); if (m) m.style.display = 'none'; }
 
   window.api = async function (action, payload) {
+    if (!cfg.API_URL || /^PASTE/.test(cfg.API_URL)) throw new Error('This link does not match a known teacher. Check the link you were given.');
     for (let attempt = 0; attempt < 2; attempt++) {
       let data;
       try {

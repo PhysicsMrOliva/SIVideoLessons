@@ -139,7 +139,7 @@ async function loadList() {
       '<button onclick="copyLinkFor(\'' + a.id + '\')">Copy link</button><button class="danger" onclick="delA(\'' + a.id + '\')">Delete</button></div></div>').join('');
   } catch (e) { $('listBody').innerHTML = '<span class="err">' + esc(e.message) + '</span>'; }
 }
-const linkFor = id => location.href.replace(/teacher\.html.*$/, '').replace(/[#?].*$/, '') + 'index.html?a=' + id;
+const linkFor = id => location.href.replace(/teacher\.html.*$/, '').replace(/[#?].*$/, '') + 'index.html?a=' + id + (window.APP_CONFIG.TEACHERS ? '&t=' + encodeURIComponent(window.APP_CONFIG.TEACHER_KEY) : '');
 async function copyLinkFor(id) { await navigator.clipboard.writeText(linkFor(id)); alert('Link copied.'); }
 async function editA(id) { A = (await api('getAssignmentFull', { id })).assignment; showTab('build'); await initBuild(); }
 function gradeA(id) { gView = 'summary'; showTab('grade'); $('gSel').value = id; loadGrading(id); }

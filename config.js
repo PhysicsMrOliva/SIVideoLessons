@@ -1,5 +1,10 @@
-// Fill these in after following SETUP.md. Neither value is secret.
+// Fill these in after following SETUP.md. None of these values are secret.
+// One Google sign-in ID is shared by everyone. Each teacher has their own backend URL.
 window.APP_CONFIG = {
-  API_URL: "https://script.google.com/macros/s/AKfycbz5QDv8v4GU7kcVxX0vgdoUHruwEeaLD4pXul4E-Ih0MpROsTX-sLapSsSRrEIEjDTT/exec",
-  GOOGLE_CLIENT_ID: "727203278087-9p1ohsnmiplc3b8m4t28m45bcmko51li.apps.googleusercontent.com"
+  GOOGLE_CLIENT_ID: "727203278087-9p1ohsnmiplc3b8m4t28m45bcmko51li.apps.googleusercontent.com",
+  DEFAULT_TEACHER: "you",
+  TEACHERS: {
+    you: "https://script.google.com/macros/s/AKfycbz5QDv8v4GU7kcVxX0vgdoUHruwEeaLD4pXul4E-Ih0MpROsTX-sLapSsSRrEIEjDTT/exec",
+    colleague: "PASTE_COLLEAGUES_APPS_SCRIPT_WEB_APP_URL"
+  }
 };

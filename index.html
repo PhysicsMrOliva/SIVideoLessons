@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Video lesson</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand" id="title">Video lesson</div>
+  <div class="small muted" id="who"></div>
+</header>
+<main class="narrow">
+  <section id="signin" class="card center">
+    <h2>Sign in to start</h2>
+    <p class="muted">Use your school Google account.</p>
+    <div id="gbtn" style="display:flex;justify-content:center"></div>
+    <p id="msg" class="err"></p>
+  </section>
+
+  <section id="app" hidden>
+    <div id="stage">
+      <div id="player"></div>
+      <div id="overlay" hidden><div class="panel" id="panel"></div></div>
+    </div>
+    <div class="status" id="status"></div>
+    <div class="card" id="finish" hidden>
+      <h2>You reached the end</h2>
+      <p id="finishText">Submit your work when you are ready.</p>
+      <button class="primary" id="submitBtn">Submit assignment</button>
+      <p id="finishMsg" class="err"></p>
+    </div>
+    <div class="card" id="done" hidden>
+      <h2>Submitted</h2>
+      <p>Your teacher has your answers. You can close this page.</p>
+    </div>
+  </section>
+</main>
+
+<script src="config.js"></script>
+<script src="shared.js"></script>
+<script>
+const AID = new URLSearchParams(location.search).get('a');
+let A, answers = {}, furthest = 0, player, ready = false, current = null, finished = false, submitted = false, preview = false;
+
+if (!AID) { $('msg').textContent = 'This link is missing an assignment code. Ask your teacher for the link.'; }
+startSignIn($('gbtn'), async prof => {
+  $('who').textContent = prof.name || prof.email;
+  $('msg').textContent = '';
+  try {
+    const d = await api('getAssignment', { id: AID });
+    A = d.assignment; preview = !!d.preview;
+    A.items.sort((a, b) => a.time - b.time);
+    if (d.response) { answers = d.response.answers || {}; furthest = d.response.maxTime || 0; submitted = d.response.submitted; }
+    document.title = A.title; $('title').textContent = A.title;
+    $('signin').hidden = true; $('app').hidden = false;
+    if (preview) $('status').textContent = 'Teacher preview: nothing you do here is saved.';
+    if (submitted) { $('stage').hidden = true; $('done').hidden = false; return; }
+    await loadYT();
+    player = new YT.Player('player', {
+      videoId: A.videoId,
+      playerVars: { rel: 0, modestbranding: 1, fs: 0, disablekb: 1, playsinline: 1, start: Math.floor(furthest) },
+      events: {
+        onReady: () => { ready = true; setInterval(tick, 200); updateStatus(); },
+        onStateChange: e => { if (e.data === 0) finish(); },
+        onError: () => { $('status').innerHTML = '<span class="err">This video cannot be played here (the owner may have disabled embedding). Tell your teacher.</span>'; }
+      }
+    });
+  } catch (e) { $('msg').textContent = e.message; }
+});
+
+const isDone = it => answers[it.id] !== undefined;
+function updateStatus() {
+  const qs = A.items.filter(i => i.type !== 'note');
+  const n = qs.filter(isDone).length;
+  if (!preview) $('status').textContent = qs.length ? 'Questions answered: ' + n + ' of ' + qs.length : '';
+}
+
+function tick() {
+  if (!ready || current || submitted) return;
+  const t = player.getCurrentTime(), st = player.getPlayerState(), dur = player.getDuration();
+  if (t > furthest + 1.5) { player.seekTo(furthest, true); return; }        // no skipping ahead
+  for (const c of A.cuts) {
+    if (t >= c.start && t < c.end - 0.05) {
+      furthest = Math.max(furthest, c.end);
+      if (c.end >= dur - 0.5) return finish();
+      player.seekTo(c.end, true); return;
+    }
+  }
+  if (st === 1 && t > furthest) furthest = t;
+  const it = A.items.find(i => !isDone(i) && i.time <= t);
+  if (it) { player.pauseVideo(); show(it); }
+}
+
+function finish() {
+  finished = true; player.pauseVideo();
+  const pending = A.items.filter(i => !isDone(i));
+  if (pending.length) return show(pending[0]);
+  $('finish').hidden = false;
+}
+
+function show(it) {
+  current = it;
+  const p = $('panel');
+  const img = it.image ? '<img alt="" src="' + esc(it.image) + '">' : '';
+  let h = '';
+  if (it.type === 'note') {
+    h = '<h3>Note</h3><p>' + escBr(it.prompt) + '</p>' + img + '<button class="primary" id="go">Continue</button>';
+  } else if (it.type === 'mc') {
+    h = '<h3>' + (it.multi ? 'Select all that apply' : 'Choose one') + '</h3><p>' + escBr(it.prompt) + '</p>' + img +
+      it.options.map((o, i) => '<label class="opt"><input type="' + (it.multi ? 'checkbox' : 'radio') + '" name="o" value="' + i + '"><span>' + esc(o) + '</span></label>').join('') +
+      '<p><button class="primary" id="go" disabled>Submit answer</button></p>';
+  } else {
+    h = '<h3>Question</h3><p>' + escBr(it.prompt) + '</p>' + img +
+      '<textarea id="txt" rows="5" placeholder="Type your answer"></textarea><p><button class="primary" id="go" disabled>Submit answer</button></p>';
+  }
+  p.innerHTML = h;
+  $('overlay').hidden = false;
+  const go = $('go');
+  if (it.type === 'mc') p.addEventListener('change', () => { go.disabled = !p.querySelector('input:checked'); });
+  if (it.type === 'open') $('txt').addEventListener('input', e => { go.disabled = !e.target.value.trim(); });
+  go.onclick = () => {
+    if (it.type === 'note') answers[it.id] = true;
+    else if (it.type === 'mc') answers[it.id] = [...p.querySelectorAll('input:checked')].map(i => Number(i.value));
+    else answers[it.id] = $('txt').value.trim();
+    save(false);
+    $('overlay').hidden = true; current = null; updateStatus();
+    if (finished) finish(); else player.playVideo();
+  };
+}
+
+function save(final) {
+  if (preview) return Promise.resolve();
+  return api(final ? 'submit' : 'saveProgress', { id: AID, answers: answers, maxTime: furthest })
+    .catch(e => { if (!final) $('status').innerHTML = '<span class="err">Could not save your last answer (' + esc(e.message) + '). Keep going; it will save with the next one.</span>'; else throw e; });
+}
+
+$('submitBtn').onclick = async () => {
+  $('submitBtn').disabled = true; $('finishMsg').textContent = '';
+  try { await save(true); $('finish').hidden = true; $('stage').hidden = true; $('done').hidden = false; $('status').textContent = ''; }
+  catch (e) { $('finishMsg').textContent = e.message; $('submitBtn').disabled = false; }
+};
+</script>
+</body>
+</html>

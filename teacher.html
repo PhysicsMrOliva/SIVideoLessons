@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Video quiz: teacher</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand">Video quiz</div>
+  <div class="small muted" id="who"></div>
+</header>
+<main>
+  <section id="signin" class="card center">
+    <h2>Teacher sign-in</h2>
+    <div id="gbtn" style="display:flex;justify-content:center"></div>
+    <p id="msg" class="err"></p>
+  </section>
+
+  <section id="app" hidden>
+    <nav class="tabs" id="tabs">
+      <button data-t="list">Assignments</button>
+      <button data-t="build">Build</button>
+      <button data-t="grade">Grade</button>
+      <button data-t="roster">Roster</button>
+    </nav>
+
+    <!-- LIST -->
+    <div id="t-list" hidden>
+      <div class="row spread"><h2>Assignments</h2><button class="primary" id="newBtn">New assignment</button></div>
+      <div id="listBody" class="muted">Loading...</div>
+    </div>
+
+    <!-- BUILD -->
+    <div id="t-build" hidden>
+      <div class="split">
+        <div class="sticky">
+          <div class="card">
+            <label for="title" style="margin-top:0">Title</label>
+            <input type="text" id="title">
+            <label for="vurl">YouTube link</label>
+            <div class="row"><input type="text" id="vurl" placeholder="https://www.youtube.com/watch?v=..." style="flex:1"><button id="loadV">Load video</button></div>
+          </div>
+          <div id="ytp"></div>
+          <div class="card" style="margin-top:.8rem">
+            <div class="row spread"><strong>Now: <span id="now">0:00</span></strong><span class="small muted">Pause the video, then add something at this time.</span></div>
+            <div class="row" style="margin-top:.5rem">
+              <button class="primary" onclick="addItem('mc')">+ Multiple choice</button>
+              <button class="primary" onclick="addItem('open')">+ Open-ended</button>
+              <button class="primary" onclick="addItem('note')">+ Note</button>
+            </div>
+            <div class="row" style="margin-top:.5rem">
+              <button onclick="cutStart()">Start cut here</button>
+              <button onclick="cutEnd()">End cut here</button>
+              <button onclick="cutToEnd()">Cut to end of video</button>
+              <span class="small" id="cutMsg"></span>
+            </div>
+          </div>
+        </div>
+        <div>
+          <div class="card">
+            <div class="row spread">
+              <label class="inline"><input type="checkbox" id="pub"> Open to students</label>
+              <button class="primary" id="saveBtn">Save assignment</button>
+            </div>
+            <p class="small" id="saveMsg"></p>
+            <div id="linkBox" class="small" hidden>Student link: <input type="text" id="linkIn" readonly onclick="this.select()"> <button class="small" onclick="copyLink()">Copy</button></div>
+          </div>
+          <h3>Cuts</h3><div id="cuts"></div>
+          <h3>Questions and notes</h3><div id="items"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- GRADE -->
+    <div id="t-grade" hidden>
+      <div class="card row">
+        <label for="gSel" style="margin:0">Assignment</label>
+        <select id="gSel" style="max-width:340px"></select>
+        <button id="gReload">Refresh</button>
+      </div>
+      <div id="gBody"></div>
+    </div>
+
+    <!-- ROSTER -->
+    <div id="t-roster" hidden>
+      <div class="card">
+        <h2>Class roster</h2>
+        <p class="muted">One student per line: <code>name, email, canvas_id</code>. Canvas ID is optional. Only students on this list can open assignments. You can also upload a CSV.</p>
+        <textarea id="rText" rows="12" placeholder="Ada Lovelace, ada@school.org, 12345"></textarea>
+        <div class="row" style="margin-top:.6rem">
+          <input type="file" id="rFile" accept=".csv,text/csv,text/plain">
+          <button class="primary" id="rSave">Save roster</button>
+          <span id="rMsg" class="small"></span>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="config.js"></script>
+<script src="shared.js"></script>
+<script>
+let A = null, G = null, yt = null, cutFrom = null, tab = 'list', gView = 'summary';
+
+// ---------- sign in & tabs ----------
+startSignIn($('gbtn'), async prof => {
+  try {
+    const w = await api('whoami');
+    if (!w.isTeacher) throw new Error(prof.email + ' is not the teacher account set in Code.gs.');
+    $('who').textContent = prof.email; $('signin').hidden = true; $('app').hidden = false;
+    showTab('list');
+  } catch (e) { $('msg').textContent = e.message; }
+});
+document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => showTab(b.dataset.t));
+function showTab(t) {
+  tab = t;
+  ['list', 'build', 'grade', 'roster'].forEach(n => $('t-' + n).hidden = n !== t);
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
+  if (t === 'list') loadList();
+  if (t === 'grade') fillGradeSelect();
+  if (t === 'roster') loadRoster();
+  if (t === 'build' && !A) newAssignment();
+}
+const flash = (el, text, cls) => { el.textContent = text; el.className = 'small ' + (cls || ''); };
+
+// ---------- list ----------
+let LIST = [];
+async function loadList() {
+  try {
+    LIST = (await api('listAssignments')).assignments;
+    if (!LIST.length) { $('listBody').innerHTML = '<div class="card">No assignments yet. Choose New assignment to make one.</div>'; return; }
+    $('listBody').innerHTML = LIST.map(a => '<div class="card row spread"><div><strong>' + esc(a.title) + '</strong> ' +
+      (a.published ? '<span class="tag">open</span>' : '<span class="tag">draft</span>') +
+      '<div class="small muted">Edited ' + esc(new Date(a.updated).toLocaleString()) + '</div></div><div class="row">' +
+      '<button onclick="editA(\'' + a.id + '\')">Edit</button><button onclick="gradeA(\'' + a.id + '\')">Grade</button>' +
+      '<button onclick="copyLinkFor(\'' + a.id + '\')">Copy link</button><button class="danger" onclick="delA(\'' + a.id + '\')">Delete</button></div></div>').join('');
+  } catch (e) { $('listBody').innerHTML = '<span class="err">' + esc(e.message) + '</span>'; }
+}
+const linkFor = id => location.href.replace(/teacher\.html.*$/, '').replace(/[#?].*$/, '') + 'index.html?a=' + id;
+async function copyLinkFor(id) { await navigator.clipboard.writeText(linkFor(id)); alert('Link copied.'); }
+async function editA(id) { A = (await api('getAssignmentFull', { id })).assignment; showTab('build'); await initBuild(); }
+function gradeA(id) { gView = 'summary'; showTab('grade'); $('gSel').value = id; loadGrading(id); }
+async function delA(id) { if (confirm('Delete this assignment? Student responses stay in the Sheet.')) { await api('deleteAssignment', { id }); loadList(); } }
+$('newBtn').onclick = () => { newAssignment(); showTab('build'); };
+
+// ---------- build ----------
+function newAssignment() { A = { id: null, title: 'Untitled assignment', videoId: '', cuts: [], items: [], published: false }; initBuild(); }
+async function initBuild() {
+  $('title').value = A.title; $('pub').checked = !!A.published; $('vurl').value = A.videoId ? 'https://youtu.be/' + A.videoId : '';
+  $('linkBox').hidden = !A.id; if (A.id) $('linkIn').value = linkFor(A.id);
+  $('saveMsg').textContent = ''; cutFrom = null; $('cutMsg').textContent = '';
+  renderEditor();
+  if (A.videoId) await loadVideo(A.videoId);
+}
+async function loadVideo(id) {
+  await loadYT();
+  if (yt && yt.cueVideoById) { yt.cueVideoById(id); return; }
+  $('ytp').innerHTML = '<div id="ytInner"></div>';
+  yt = new YT.Player('ytInner', { videoId: id, playerVars: { rel: 0, playsinline: 1 } });
+}
+$('loadV').onclick = async () => {
+  const id = ytId($('vurl').value);
+  if (!id) return flash($('saveMsg'), 'That does not look like a YouTube link.', 'err');
+  A.videoId = id; $('saveMsg').textContent = ''; await loadVideo(id);
+};
+$('title').oninput = e => A.title = e.target.value;
+$('pub').onchange = e => A.published = e.target.checked;
+setInterval(() => { if (yt && yt.getCurrentTime && tab === 'build') $('now').textContent = fmt(yt.getCurrentTime()); }, 300);
+const nowT = () => (yt && yt.getCurrentTime) ? Math.floor(yt.getCurrentTime()) : 0;
+
+function addItem(type) {
+  if (!A.videoId) return flash($('saveMsg'), 'Load a video first.', 'err');
+  A.items.push({ id: uid(), time: nowT(), type, prompt: '', image: '', options: ['', ''], correct: [], multi: false, points: type === 'note' ? 0 : 1, sample: '' });
+  renderEditor();
+}
+function cutStart() { cutFrom = nowT(); $('cutMsg').textContent = 'Cut starts at ' + fmt(cutFrom) + '. Move to the end of the section, then choose End cut.'; }
+function cutEnd() {
+  const e = nowT();
+  if (cutFrom === null || e <= cutFrom) return $('cutMsg').textContent = 'Choose Start cut first, then move later in the video.';
+  A.cuts.push({ start: cutFrom, end: e }); cutFrom = null; $('cutMsg').textContent = ''; renderEditor();
+}
+function cutToEnd() { const s = cutFrom !== null ? cutFrom : nowT(); A.cuts.push({ start: s, end: Math.ceil(yt.getDuration()) }); cutFrom = null; $('cutMsg').textContent = ''; renderEditor(); }
+
+function renderEditor() {
+  A.items.sort((a, b) => a.time - b.time); A.cuts.sort((a, b) => a.start - b.start);
+  $('cuts').innerHTML = A.cuts.length ? A.cuts.map((c, i) => '<div class="card cut row"><span>Skip</span><input type="text" style="width:5.5rem" value="' + fmt(c.start) + '" onchange="setCut(' + i + ',\'start\',this.value)"><span>to</span><input type="text" style="width:5.5rem" value="' + fmt(c.end) + '" onchange="setCut(' + i + ',\'end\',this.value)"><button class="danger small" onclick="A.cuts.splice(' + i + ',1);renderEditor()">Remove</button></div>').join('') : '<p class="muted small">No cuts. Students watch the whole video.</p>';
+  $('items').innerHTML = A.items.length ? A.items.map(itemHtml).join('') : '<p class="muted small">Nothing added yet. Pause the video where you want a question or note.</p>';
+}
+function setCut(i, k, v) { const t = parseTime(v); if (!isNaN(t)) A.cuts[i][k] = t; renderEditor(); }
+function itemHtml(it, i) {
+  const label = { mc: 'Multiple choice', open: 'Open-ended', note: 'Note' }[it.type];
+  let h = '<div class="card item ' + it.type + '"><div class="row spread"><div class="row"><span class="tag">' + label + '</span>at <input type="text" style="width:5.5rem" value="' + fmt(it.time) + '" onchange="setTime(' + i + ',this.value)"><button class="small" onclick="yt.seekTo(' + it.time + ',true)">Go to</button></div><button class="danger small" onclick="delItem(' + i + ')">Delete</button></div>';
+  h += '<label>' + (it.type === 'note' ? 'Note text' : 'Question') + '</label><textarea oninput="A.items[' + i + '].prompt=this.value">' + esc(it.prompt) + '</textarea>';
+  h += '<label>Image (optional)</label>';
+  if (it.image) h += '<img class="thumb" alt="" src="' + esc(it.image) + '"><button class="small" onclick="A.items[' + i + '].image=\'\';renderEditor()">Remove image</button>';
+  else h += '<div class="row"><input type="file" accept="image/*" onchange="addImage(' + i + ',this)"><input type="url" placeholder="or paste an image address" style="flex:1" onchange="A.items[' + i + '].image=this.value.trim();renderEditor()"></div>';
+  if (it.type === 'mc') {
+    h += '<label class="inline" style="margin-top:.6rem"><input type="checkbox" ' + (it.multi ? 'checked' : '') + ' onchange="setMulti(' + i + ',this.checked)"> Students can select more than one answer</label>';
+    h += '<p class="small muted" style="margin:.3rem 0">Tick the correct answer' + (it.multi ? 's' : '') + '.</p>';
+    h += it.options.map((o, j) => '<div class="optrow"><input type="' + (it.multi ? 'checkbox' : 'radio') + '" name="c' + i + '" ' + (it.correct.includes(j) ? 'checked' : '') + ' onchange="setCorrect(' + i + ',' + j + ',this.checked)"><input type="text" value="' + esc(o) + '" oninput="A.items[' + i + '].options[' + j + ']=this.value"><button class="small danger" onclick="delOpt(' + i + ',' + j + ')">x</button></div>').join('');
+    h += '<button class="small" onclick="A.items[' + i + '].options.push(\'\');renderEditor()">Add option</button>';
+  }
+  if (it.type === 'open') h += '<label>Sample answer (only you see this)</label><textarea oninput="A.items[' + i + '].sample=this.value"></textarea>'.replace('></textarea>', '>' + esc(it.sample) + '</textarea>');
+  if (it.type !== 'note') h += '<label>Points</label><input type="number" min="0" step="0.5" style="width:6rem" value="' + it.points + '" oninput="A.items[' + i + '].points=Number(this.value)">';
+  return h + '</div>';
+}
+function setTime(i, v) { const t = parseTime(v); if (!isNaN(t)) A.items[i].time = t; renderEditor(); }
+function delItem(i) { if (confirm('Delete this item?')) { A.items.splice(i, 1); renderEditor(); } }
+function setMulti(i, on) { const it = A.items[i]; it.multi = on; if (!on) it.correct = it.correct.slice(0, 1); renderEditor(); }
+function setCorrect(i, j, on) {
+  const it = A.items[i];
+  if (!it.multi) it.correct = on ? [j] : [];
+  else it.correct = on ? [...new Set([...it.correct, j])] : it.correct.filter(x => x !== j);
+}
+function delOpt(i, j) { const it = A.items[i]; it.options.splice(j, 1); it.correct = it.correct.filter(x => x !== j).map(x => x > j ? x - 1 : x); renderEditor(); }
+function addImage(i, input) {
+  const f = input.files[0]; if (!f) return;
+  const img = new Image(), url = URL.createObjectURL(f);
+  img.onload = () => {
+    const s = Math.min(1, 720 / Math.max(img.width, img.height)), c = document.createElement('canvas');
+    c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
+    A.items[i].image = c.toDataURL('image/jpeg', 0.75); URL.revokeObjectURL(url); renderEditor();
+  };
+  img.src = url;
+}
+function copyLink() { navigator.clipboard.writeText($('linkIn').value); }
+
+$('saveBtn').onclick = async () => {
+  const bad = A.items.find(it => it.type === 'mc' && (it.options.some(o => !o.trim()) || it.options.length < 2 || !it.correct.length));
+  if (bad) return flash($('saveMsg'), 'Multiple choice at ' + fmt(bad.time) + ' needs 2+ filled-in options and at least one correct answer.', 'err');
+  if (A.items.some(it => !it.prompt.trim())) return flash($('saveMsg'), 'Every question and note needs text.', 'err');
+  flash($('saveMsg'), 'Saving...');
+  try {
+    const r = await api('saveAssignment', { assignment: A });
+    A.id = r.id; $('linkBox').hidden = false; $('linkIn').value = linkFor(A.id);
+    flash($('saveMsg'), 'Saved. ' + (A.published ? 'Students can open it now.' : 'It is a draft; tick "Open to students" and save to release it.'), 'ok');
+  } catch (e) { flash($('saveMsg'), e.message, 'err'); }
+};
+
+// ---------- roster ----------
+function parseCsv(text) {
+  const rows = []; let row = [], cur = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"' && text[i + 1] === '"') { cur += '"'; i++; } else if (c === '"') q = false; else cur += c; }
+    else if (c === '"') q = true;
+    else if (c === ',') { row.push(cur); cur = ''; }
+    else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; row.push(cur); cur = ''; if (row.some(x => x.trim())) rows.push(row); row = []; }
+    else cur += c;
+  }
+  row.push(cur); if (row.some(x => x.trim())) rows.push(row);
+  return rows.map(r => r.map(x => x.trim()));
+}
+const csvCell = v => { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+const csvText = rows => rows.map(r => r.map(csvCell).join(',')).join('\r\n');
+function download(name, text) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv' })); a.download = name; a.click(); }
+async function loadRoster() {
+  try { const r = (await api('getRoster')).roster; $('rText').value = r.map(s => [s.name, s.email, s.canvasId].map(csvCell).join(', ')).join('\n'); flash($('rMsg'), r.length + ' students'); } catch (e) { flash($('rMsg'), e.message, 'err'); }
+}
+$('rFile').onchange = async e => { const f = e.target.files[0]; if (f) $('rText').value = await f.text(); };
+$('rSave').onclick = async () => {
+  let rows = parseCsv($('rText').value);
+  if (rows.length && !/@/.test(rows[0].join(' '))) {      // header row
+    const h = rows.shift().map(x => x.toLowerCase());
+    const ni = h.findIndex(x => /name/.test(x)), ei = h.findIndex(x => /mail/.test(x)), ci = h.findIndex(x => /canvas|^id$|sis/.test(x));
+    rows = rows.map(r => [r[ni >= 0 ? ni : 0], r[ei >= 0 ? ei : 1], ci >= 0 ? r[ci] : '']);
+  }
+  const roster = rows.map(r => ({ name: r[0] || '', email: (r[1] || '').toLowerCase(), canvasId: r[2] || '' })).filter(s => /@/.test(s.email));
+  try { const r = await api('saveRoster', { roster }); flash($('rMsg'), 'Saved ' + r.count + ' students.', 'ok'); } catch (e) { flash($('rMsg'), e.message, 'err'); }
+};
+
+// ---------- grading ----------
+function fillGradeSelect() {
+  api('listAssignments').then(r => {
+    LIST = r.assignments;
+    const cur = $('gSel').value;
+    $('gSel').innerHTML = LIST.map(a => '<option value="' + a.id + '">' + esc(a.title) + '</option>').join('');
+    if (cur && LIST.some(a => a.id === cur)) $('gSel').value = cur;
+    if (LIST.length) loadGrading($('gSel').value); else $('gBody').innerHTML = '<div class="card">No assignments yet.</div>';
+  }).catch(e => $('gBody').innerHTML = '<span class="err">' + esc(e.message) + '</span>');
+}
+$('gSel').onchange = () => { gView = 'summary'; loadGrading($('gSel').value); };
+$('gReload').onclick = () => loadGrading($('gSel').value);
+async function loadGrading(id) {
+  $('gBody').innerHTML = '<p class="muted">Loading...</p>';
+  try { G = await api('getResponses', { id }); G.byEmail = {}; G.responses.forEach(r => G.byEmail[r.email] = r); renderGrade(); }
+  catch (e) { $('gBody').innerHTML = '<span class="err">' + esc(e.message) + '</span>'; }
+}
+const gr = (email, id) => G.grades[email + '|' + id];
+const scorable = () => G.assignment.items.filter(i => i.type !== 'note');
+const students = () => G.roster.slice().sort((a, b) => a.name.localeCompare(b.name));
+function totalFor(email) { let t = 0; scorable().forEach(i => { const g = gr(email, i.id); if (g && typeof g.score === 'number') t += g.score; }); return t; }
+const maxTotal = () => scorable().reduce((s, i) => s + (Number(i.points) || 0), 0);
+function needsGrade(email, it) { const r = G.byEmail[email]; return r && r.submitted && r.answers[it.id] !== undefined && (!gr(email, it.id) || gr(email, it.id).score === null); }
+
+function renderGrade() {
+  const its = scorable();
+  const tabsH = '<div class="row" style="margin-bottom:.8rem"><button ' + (gView === 'summary' ? 'class="primary"' : '') + ' onclick="gView=\'summary\';renderGrade()">Summary</button>' +
+    its.map((it, i) => { const n = students().filter(s => needsGrade(s.email, it)).length; return '<button ' + (gView === it.id ? 'class="primary"' : '') + ' onclick="gView=\'' + it.id + '\';renderGrade()">Q' + (i + 1) + ' ' + (it.type === 'mc' ? '(MC)' : '(open)') + (n ? ' · ' + n + ' to grade' : '') + '</button>'; }).join('') + '</div>';
+  $('gBody').innerHTML = tabsH + (gView === 'summary' ? summaryHtml() : questionHtml(its.find(i => i.id === gView)));
+}
+
+function summaryHtml() {
+  const its = scorable(), mx = maxTotal();
+  let h = '<div class="card"><div class="row spread"><div><strong>' + esc(G.assignment.title) + '</strong><div class="small muted">' + G.responses.filter(r => r.submitted).length + ' of ' + G.roster.length + ' submitted. Out of ' + mx + ' points.</div></div></div>' +
+    '<div class="row" style="margin-top:.6rem"><label class="inline">Canvas column name <input type="text" id="cvHead" style="width:18rem" value="' + esc(G.assignment.title) + '"></label>' +
+    '<button class="primary" onclick="exportCanvas()">Download Canvas CSV</button><button onclick="exportDetail()">Download detailed CSV</button></div>' +
+    '<p class="small muted">For Canvas, export your gradebook once, copy the assignment column name exactly (it looks like "Title (123456)"), and paste it in the box above.</p></div>';
+  h += '<div class="card scroll"><table><tr><th>Student</th><th>Status</th>' + its.map((_, i) => '<th class="num">Q' + (i + 1) + '</th>').join('') + '<th class="num">Total</th></tr>';
+  students().forEach(s => {
+    const r = G.byEmail[s.email];
+    const st = !r ? '<span class="muted">not started</span>' : r.submitted ? 'submitted' : '<span class="muted">in progress</span>';
+    h += '<tr><td>' + esc(s.name) + '</td><td>' + st + '</td>' + its.map(it => {
+      const g = gr(s.email, it.id);
+      if (needsGrade(s.email, it)) return '<td class="num todo" onclick="gView=\'' + it.id + '\';renderGrade()">grade</td>';
+      return '<td class="num">' + (g && typeof g.score === 'number' ? g.score : '') + '</td>';
+    }).join('') + '<td class="num"><strong>' + (r && r.submitted ? totalFor(s.email) : '') + '</strong></td></tr>';
+  });
+  return h + '</table></div>';
+}
+
+function questionHtml(it) {
+  if (!it) return '';
+  const idx = scorable().indexOf(it) + 1;
+  let h = '<div class="card"><h3>Q' + idx + '</h3><p>' + escBr(it.prompt) + '</p>' + (it.image ? '<img class="thumb" alt="" src="' + esc(it.image) + '">' : '') +
+    '<div class="small muted">' + it.points + ' point' + (it.points == 1 ? '' : 's') + '</div>';
+  if (it.type === 'mc') h += '<div class="small">' + it.options.map((o, j) => (it.correct.includes(j) ? '<span class="sel-ok">✔ ' : '<span>• ') + esc(o) + '</span>').join('<br>') + '</div>';
+  else if (it.sample) h += '<div class="answer"><span class="small muted">Sample answer</span><br>' + escBr(it.sample) + '</div>';
+  h += '</div>';
+  students().forEach(s => {
+    const r = G.byEmail[s.email], a = r ? r.answers[it.id] : undefined, g = gr(s.email, it.id);
+    const graded = g && typeof g.score === 'number';
+    h += '<div class="card gcard ' + (graded ? 'graded' : (a !== undefined ? 'todo' : '')) + '" id="gc-' + esc(s.email) + '"><div class="row spread"><strong>' + esc(s.name) + '</strong><span class="small muted">' + (!r ? 'no response' : r.submitted ? '' : 'not submitted yet') + '</span></div>';
+    if (a === undefined) { h += '<div class="muted small">No answer.</div></div>'; return; }
+    if (it.type === 'mc') h += '<div>' + (a.length ? a.map(j => '<span class="' + (it.correct.includes(j) ? 'sel-ok' : 'sel-bad') + '">' + esc(it.options[j]) + '</span>').join(', ') : '<span class="muted">(blank)</span>') + '</div>';
+    else h += '<div class="answer">' + escBr(a) + '</div>';
+    const em = esc(s.email).replace(/'/g, '&#39;');
+    h += '<div class="row" style="margin-top:.4rem">' +
+      [0, it.points / 2, it.points].filter((v, k, arr) => arr.indexOf(v) === k).map(v => '<button class="small" onclick="setGrade(\'' + em + '\',\'' + it.id + '\',' + v + ')">' + v + '</button>').join('') +
+      '<input type="number" step="0.5" style="width:5.5rem" placeholder="score" value="' + (graded ? g.score : '') + '" onchange="setGrade(\'' + em + '\',\'' + it.id + '\',this.value)">' +
+      '<input type="text" style="flex:1;min-width:12rem" placeholder="comment (optional)" value="' + esc(g ? g.comment : '') + '" onchange="setComment(\'' + em + '\',\'' + it.id + '\',this.value)">' +
+      (g && g.auto ? '<span class="tag">auto</span>' : '') + '</div></div>';
+  });
+  return h;
+}
+
+async function setGrade(email, itemId, v) {
+  const score = v === '' ? null : Number(v), old = gr(email, itemId);
+  G.grades[email + '|' + itemId] = { score, comment: old ? old.comment : '', auto: false };
+  try { await api('saveGrade', { id: G.assignment.id, email, itemId, score: score === null ? '' : score, comment: old ? old.comment : '' }); } catch (e) { alert('Could not save: ' + e.message); }
+  renderGradeKeepScroll();
+}
+async function setComment(email, itemId, text) {
+  const old = gr(email, itemId) || { score: null, auto: false };
+  G.grades[email + '|' + itemId] = { score: old.score, comment: text, auto: old.auto };
+  try { await api('saveGrade', { id: G.assignment.id, email, itemId, score: old.score === null ? '' : old.score, comment: text }); } catch (e) { alert('Could not save: ' + e.message); }
+}
+function renderGradeKeepScroll() { const y = window.scrollY; renderGrade(); window.scrollTo(0, y); }
+
+function exportCanvas() {
+  const head = $('cvHead').value.trim() || G.assignment.title;
+  const rows = [['Student', 'ID', 'SIS Login ID', head]];
+  students().forEach(s => { const r = G.byEmail[s.email]; rows.push([s.name, s.canvasId, s.email, r && r.submitted ? totalFor(s.email) : '']); });
+  download(G.assignment.title.replace(/[^\w]+/g, '_') + '_canvas.csv', csvText(rows));
+}
+function exportDetail() {
+  const its = scorable();
+  const rows = [['Student', 'Email', 'Submitted'].concat(its.map((it, i) => 'Q' + (i + 1) + ' (' + it.points + ')'), ['Total (' + maxTotal() + ')'])];
+  students().forEach(s => { const r = G.byEmail[s.email]; rows.push([s.name, s.email, r && r.submitted ? 'yes' : 'no'].concat(its.map(it => { const g = gr(s.email, it.id); return g && typeof g.score === 'number' ? g.score : ''; }), [r && r.submitted ? totalFor(s.email) : ''])); });
+  download(G.assignment.title.replace(/[^\w]+/g, '_') + '_detail.csv', csvText(rows));
+}
+</script>
+</body>
+</html>

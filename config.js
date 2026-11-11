@@ -5,6 +5,6 @@ window.APP_CONFIG = {
   DEFAULT_TEACHER: "you",
   TEACHERS: {
     you: "https://script.google.com/a/macros/siprep.org/s/AKfycbyHY37tvNuVFv2OaJc3WnsHFlxdb9rwtoUXQgT6yzXtGiNn16ESTXutz30Vqo485EHAIQ/exec",
-    colleague: "https://script.google.com/a/macros/siprep.org/s/AKfycbwmI8cOYoOtA_zgWZlzNei_1erj_NBUjpIh8OWbc_tLQI3COz5snZ2BJOA0wWS9ouaz/exec"
+    colleague: "https://script.google.com/a/macros/siprep.org/s/AKfycbyHY37tvNuVFv2OaJc3WnsHFlxdb9rwtoUXQgT6yzXtGiNn16ESTXutz30Vqo485EHAIQ/exec"
   }
 };

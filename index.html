@@ -24,8 +24,10 @@
     <div id="stage">
       <div id="player"></div>
       <div id="overlay" hidden><div class="panel" id="panel"></div></div>
+      <div id="fsGate" hidden><p><strong>This assignment is watched in full screen.</strong></p><p class="small">The video pauses if you leave full screen, and your teacher can see it.</p><button class="primary" id="fsBtn">Go full screen</button></div>
     </div>
     <div class="status" id="status"></div>
+    <p class="small muted">The video pauses if you leave this page, and your teacher can see how long you were away.</p>
     <div class="card" id="finish" hidden>
       <h2>You reached the end</h2>
       <p id="finishText">Submit your work when you are ready.</p>
@@ -43,7 +45,9 @@
 <script src="shared.js"></script>
 <script>
 const AID = new URLSearchParams(location.search).get('a');
-let A, answers = {}, furthest = 0, player, ready = false, current = null, finished = false, submitted = false, preview = false;
+let rates = {}, requireFS = false, fsDone = false, fsSuppress = false;
+let watched = 0, aways = [], playable = 0, awayStart = null, awayVT = 0, pausedByLeave = false, lastTick = performance.now();
+let maxSpeed = 2, A, answers = {}, furthest = 0, player, ready = false, current = null, finished = false, submitted = false, preview = false;
 
 if (!AID) { $('msg').textContent = 'This link is missing an assignment code. Ask your teacher for the link.'; }
 startSignIn($('gbtn'), async prof => {
@@ -53,9 +57,12 @@ startSignIn($('gbtn'), async prof => {
     const d = await api('getAssignment', { id: AID });
     A = d.assignment; preview = !!d.preview;
     A.items.sort((a, b) => a.time - b.time);
-    if (d.response) { answers = d.response.answers || {}; furthest = d.response.maxTime || 0; submitted = d.response.submitted; }
+    maxSpeed = Number(A.maxSpeed) || 2;
+    requireFS = !!A.fullscreen && fsSupported();
+    if (d.response) { answers = d.response.answers || {}; furthest = d.response.maxTime || 0; submitted = d.response.submitted; const w0 = d.response.watch || {}; watched = w0.watched || 0; aways = w0.aways || []; rates = w0.rates || {}; }
     document.title = A.title; $('title').textContent = A.title;
     $('signin').hidden = true; $('app').hidden = false;
+    if (requireFS && !submitted) $('fsGate').hidden = false;
     if (preview) $('status').textContent = 'Teacher preview: nothing you do here is saved.';
     if (submitted) { $('stage').hidden = true; $('done').hidden = false; return; }
     await loadYT();
@@ -65,12 +72,18 @@ startSignIn($('gbtn'), async prof => {
       events: {
         onReady: () => { ready = true; setInterval(tick, 200); updateStatus(); },
         onStateChange: e => { if (e.data === 0) finish(); },
+        onPlaybackRateChange: () => clampSpeed(),
         onError: () => { $('status').innerHTML = '<span class="err">This video cannot be played here (the owner may have disabled embedding). Tell your teacher.</span>'; }
       }
     });
   } catch (e) { $('msg').textContent = e.message; }
 });
 
+function clampSpeed() {
+  if (!player || !player.getPlaybackRate || player.getPlaybackRate() <= maxSpeed + 0.001) return;
+  player.setPlaybackRate(maxSpeed);
+  if (!preview) { $('status').textContent = 'The maximum speed for this assignment is ' + maxSpeed + 'x.'; setTimeout(updateStatus, 3000); }
+}
 const isDone = it => answers[it.id] !== undefined;
 function updateStatus() {
   const qs = A.items.filter(i => i.type !== 'note');
@@ -78,8 +91,25 @@ function updateStatus() {
   if (!preview) $('status').textContent = qs.length ? 'Questions answered: ' + n + ' of ' + qs.length : '';
 }
 
+function computePlayable(dur) {
+  const cs = A.cuts.map(c => [Math.max(0, c.start), Math.min(dur, c.end)]).filter(c => c[1] > c[0]).sort((a, b) => a[0] - b[0]);
+  let cut = 0, end = -1;
+  cs.forEach(c => { const st = Math.max(c[0], end); if (c[1] > st) { cut += c[1] - st; end = c[1]; } });
+  return Math.max(0, dur - cut);
+}
 function tick() {
+  const now = performance.now(), dt = (now - lastTick) / 1000; lastTick = now;
+  if (ready && !submitted) {
+    if (!playable) { const d = player.getDuration(); if (d > 0) playable = computePlayable(d); }
+    if (player.getPlayerState() === 1 && awayStart === null && dt < 1) {
+      watched += dt;
+      const rk = String(Math.round(player.getPlaybackRate() * 100) / 100);
+      rates[rk] = (rates[rk] || 0) + dt;
+    }
+  }
   if (!ready || current || submitted) return;
+  if (requireFS && !fsDone && !inFS()) { if (player.getPlayerState() === 1) player.pauseVideo(); $('fsGate').hidden = false; return; }
+  clampSpeed();
   const t = player.getCurrentTime(), st = player.getPlayerState(), dur = player.getDuration();
   if (t > furthest + 1.5) { player.seekTo(furthest, true); return; }        // no skipping ahead
   for (const c of A.cuts) {
@@ -98,6 +128,7 @@ function finish() {
   finished = true; player.pauseVideo();
   const pending = A.items.filter(i => !isDone(i));
   if (pending.length) return show(pending[0]);
+  fsDone = true; $('fsGate').hidden = true; exitFS();
   $('finish').hidden = false;
 }
 
@@ -117,6 +148,7 @@ function show(it) {
       '<textarea id="txt" rows="5" placeholder="Type your answer"></textarea><p><button class="primary" id="go" disabled>Submit answer</button></p>';
   }
   p.innerHTML = h;
+  if (it.type === 'open' && requireFS && inFS()) { fsSuppress = true; exitFS(); }
   $('overlay').hidden = false;
   const go = $('go');
   if (it.type === 'mc') p.addEventListener('change', () => { go.disabled = !p.querySelector('input:checked'); });
@@ -126,6 +158,7 @@ function show(it) {
     else if (it.type === 'mc') answers[it.id] = [...p.querySelectorAll('input:checked')].map(i => Number(i.value));
     else answers[it.id] = $('txt').value.trim();
     save(false);
+    fsSuppress = false;
     $('overlay').hidden = true; current = null; updateStatus();
     if (finished) finish(); else player.playVideo();
   };
@@ -133,13 +166,54 @@ function show(it) {
 
 function save(final) {
   if (preview) return Promise.resolve();
-  return api(final ? 'submit' : 'saveProgress', { id: AID, answers: answers, maxTime: furthest })
+  return api(final ? 'submit' : 'saveProgress', { id: AID, answers: answers, maxTime: furthest, watch: { watched: Math.round(watched), playable: Math.round(playable), aways: aways, rates: roundedRates() } })
     .catch(e => { if (!final) $('status').innerHTML = '<span class="err">Could not save your last answer (' + esc(e.message) + '). Keep going; it will save with the next one.</span>'; else throw e; });
 }
 
+function roundedRates() { const o = {}; Object.keys(rates).forEach(k => o[k] = Math.round(rates[k])); return o; }
+const fsEl = () => document.fullscreenElement || document.webkitFullscreenElement;
+const inFS = () => !!fsEl();
+function fsSupported() { const e = document.getElementById('stage'); return !!(e && (e.requestFullscreen || e.webkitRequestFullscreen)); }
+function enterFS() {
+  const e = $('stage');
+  try {
+    const p = e.requestFullscreen ? e.requestFullscreen() : e.webkitRequestFullscreen();
+    if (p && p.catch) p.catch(() => { $('fsBtn').textContent = 'Could not enter full screen. Tap to try again'; });
+  } catch (err) { $('fsBtn').textContent = 'Could not enter full screen. Tap to try again'; }
+}
+function exitFS() { try { if (inFS()) (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch (e) {} }
+function fsChanged() {
+  if (!requireFS || fsDone || submitted || fsSuppress) return;
+  if (inFS()) { $('fsGate').hidden = true; back(); }
+  else { leave(); $('fsGate').hidden = false; }
+}
+document.addEventListener('fullscreenchange', fsChanged);
+document.addEventListener('webkitfullscreenchange', fsChanged);
+$('fsBtn').onclick = enterFS;
+
+function leave() {
+  if (!ready || submitted || awayStart !== null) return;
+  awayStart = Date.now(); awayVT = player.getCurrentTime();
+  if (player.getPlayerState() === 1) { player.pauseVideo(); pausedByLeave = true; }
+}
+function back() {
+  if (awayStart === null) return;
+  if (requireFS && !fsDone && !inFS()) return;   // still away until back in full screen
+  const secs = (Date.now() - awayStart) / 1000; awayStart = null;
+  if (secs >= 2) {
+    aways.push([Math.round(awayVT), Math.round(secs)]); if (aways.length > 200) aways.shift();
+    save(false);
+  }
+  if (pausedByLeave) { pausedByLeave = false; if (!preview) $('status').textContent = 'The video paused because you left this page. Press play to continue.'; }
+}
+document.addEventListener('visibilitychange', () => document.hidden ? leave() : back());
+window.addEventListener('pagehide', leave);
+window.addEventListener('blur', () => setTimeout(() => { const a = document.activeElement; if (a && a.tagName === 'IFRAME') return; leave(); }, 0));
+window.addEventListener('focus', back);
+
 $('submitBtn').onclick = async () => {
   $('submitBtn').disabled = true; $('finishMsg').textContent = '';
-  try { await save(true); $('finish').hidden = true; $('stage').hidden = true; $('done').hidden = false; $('status').textContent = ''; }
+  try { await save(true); submitted = true; $('finish').hidden = true; $('stage').hidden = true; $('done').hidden = false; $('status').textContent = ''; }
   catch (e) { $('finishMsg').textContent = e.message; $('submitBtn').disabled = false; }
 };
 </script>

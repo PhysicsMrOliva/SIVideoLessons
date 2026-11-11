@@ -65,6 +65,15 @@
               <label class="inline"><input type="checkbox" id="pub"> Open to students</label>
               <button class="primary" id="saveBtn">Save assignment</button>
             </div>
+            <div style="margin-top:.6rem"><label class="inline">Max playback speed
+              <select id="maxSpeed" style="width:auto">
+                <option value="1">1x (no speeding up)</option>
+                <option value="1.25">1.25x</option>
+                <option value="1.5">1.5x</option>
+                <option value="1.75">1.75x</option>
+                <option value="2">2x (no limit)</option>
+              </select></label></div>
+            <div style="margin-top:.5rem"><label class="inline"><input type="checkbox" id="fs"> Require full screen (iPad and computers; skipped on phones)</label></div>
             <p class="small" id="saveMsg"></p>
             <div id="linkBox" class="small" hidden>Student link: <input type="text" id="linkIn" readonly onclick="this.select()"> <button class="small" onclick="copyLink()">Copy</button></div>
           </div>
@@ -147,9 +156,9 @@ async function delA(id) { if (confirm('Delete this assignment? Student responses
 $('newBtn').onclick = () => { newAssignment(); showTab('build'); };
 
 // ---------- build ----------
-function newAssignment() { A = { id: null, title: 'Untitled assignment', videoId: '', cuts: [], items: [], published: false }; initBuild(); }
+function newAssignment() { A = { id: null, title: 'Untitled assignment', videoId: '', cuts: [], items: [], published: false, maxSpeed: 2, fullscreen: false }; initBuild(); }
 async function initBuild() {
-  $('title').value = A.title; $('pub').checked = !!A.published; $('vurl').value = A.videoId ? 'https://youtu.be/' + A.videoId : '';
+  $('title').value = A.title; $('pub').checked = !!A.published; $('maxSpeed').value = String(A.maxSpeed || 2); $('fs').checked = !!A.fullscreen; $('vurl').value = A.videoId ? 'https://youtu.be/' + A.videoId : '';
   $('linkBox').hidden = !A.id; if (A.id) $('linkIn').value = linkFor(A.id);
   $('saveMsg').textContent = ''; cutFrom = null; $('cutMsg').textContent = '';
   renderEditor();
@@ -168,6 +177,8 @@ $('loadV').onclick = async () => {
 };
 $('title').oninput = e => A.title = e.target.value;
 $('pub').onchange = e => A.published = e.target.checked;
+$('maxSpeed').onchange = e => A.maxSpeed = Number(e.target.value);
+$('fs').onchange = e => A.fullscreen = e.target.checked;
 setInterval(() => { if (yt && yt.getCurrentTime && tab === 'build') $('now').textContent = fmt(yt.getCurrentTime()); }, 300);
 const nowT = () => (yt && yt.getCurrentTime) ? Math.floor(yt.getCurrentTime()) : 0;
 
@@ -304,17 +315,33 @@ function renderGrade() {
   $('gBody').innerHTML = tabsH + (gView === 'summary' ? summaryHtml() : questionHtml(its.find(i => i.id === gView)));
 }
 
+function awayInfo(r) {
+  const w = (r && r.watch) || {}, a = w.aways || [];
+  return { rates: w.rates || {}, watched: w.watched || 0, playable: w.playable || 0, n: a.length, secs: a.reduce((x, y) => x + y[1], 0), list: a };
+}
+function watchCells(r) {
+  if (!r) return '<td></td><td></td><td></td>';
+  const w = awayInfo(r);
+  const rk = Object.keys(w.rates).map(Number).sort((a, b) => a - b);
+  const speed = !rk.length ? '' : rk.length === 1 ? rk[0] + '×' : rk[0] + '×–' + rk[rk.length - 1] + '×';
+  const stip = rk.map(k => k + '×: ' + fmt(w.rates[String(k)])).join('; ');
+  const tip = w.list.map(a => 'at ' + fmt(a[0]) + ' for ' + fmt(a[1])).join('; ');
+  return '<td>' + fmt(w.watched) + (w.playable ? ' of ' + fmt(w.playable) : '') + '</td><td title="' + esc(stip) + '">' + speed + '</td>' +
+    '<td' + (w.n ? ' class="todo" title="' + esc(tip) + '"' : '') + '>' + (w.n ? w.n + ' time' + (w.n > 1 ? 's' : '') + ', ' + fmt(w.secs) : 'never') + '</td>';
+}
+function watchVals(r) { if (!r) return ['', '', '', '', '']; const w = awayInfo(r); return [w.watched, w.playable, w.n, w.secs, Object.keys(w.rates).map(k => k + 'x:' + w.rates[k] + 's').join('; ')]; }
+
 function summaryHtml() {
   const its = scorable(), mx = maxTotal();
-  let h = '<div class="card"><div class="row spread"><div><strong>' + esc(G.assignment.title) + '</strong><div class="small muted">' + G.responses.filter(r => r.submitted).length + ' of ' + G.roster.length + ' submitted. Out of ' + mx + ' points.</div></div></div>' +
+  let h = '<div class="card"><div class="row spread"><div><strong>' + esc(G.assignment.title) + '</strong><div class="small muted">' + G.responses.filter(r => r.submitted).length + ' of ' + G.roster.length + ' submitted. Out of ' + mx + ' points. Speed limit: ' + (G.assignment.maxSpeed || 2) + '×.' + (G.assignment.fullscreen ? ' Full screen required.' : '') + '</div></div></div>' +
     '<div class="row" style="margin-top:.6rem"><label class="inline">Canvas column name <input type="text" id="cvHead" style="width:18rem" value="' + esc(G.assignment.title) + '"></label>' +
     '<button class="primary" onclick="exportCanvas()">Download Canvas CSV</button><button onclick="exportDetail()">Download detailed CSV</button></div>' +
     '<p class="small muted">For Canvas, export your gradebook once, copy the assignment column name exactly (it looks like "Title (123456)"), and paste it in the box above.</p></div>';
-  h += '<div class="card scroll"><table><tr><th>Student</th><th>Status</th>' + its.map((_, i) => '<th class="num">Q' + (i + 1) + '</th>').join('') + '<th class="num">Total</th></tr>';
+  h += '<div class="card scroll"><table><tr><th>Student</th><th>Status</th><th>Watched</th><th>Speed</th><th>Left page</th>' + its.map((_, i) => '<th class="num">Q' + (i + 1) + '</th>').join('') + '<th class="num">Total</th></tr>';
   students().forEach(s => {
     const r = G.byEmail[s.email];
     const st = !r ? '<span class="muted">not started</span>' : r.submitted ? 'submitted' : '<span class="muted">in progress</span>';
-    h += '<tr><td>' + esc(s.name) + '</td><td>' + st + '</td>' + its.map(it => {
+    h += '<tr><td>' + esc(s.name) + '</td><td>' + st + '</td>' + watchCells(r) + its.map(it => {
       const g = gr(s.email, it.id);
       if (needsGrade(s.email, it)) return '<td class="num todo" onclick="gView=\'' + it.id + '\';renderGrade()">grade</td>';
       return '<td class="num">' + (g && typeof g.score === 'number' ? g.score : '') + '</td>';
@@ -369,8 +396,8 @@ function exportCanvas() {
 }
 function exportDetail() {
   const its = scorable();
-  const rows = [['Student', 'Email', 'Submitted'].concat(its.map((it, i) => 'Q' + (i + 1) + ' (' + it.points + ')'), ['Total (' + maxTotal() + ')'])];
-  students().forEach(s => { const r = G.byEmail[s.email]; rows.push([s.name, s.email, r && r.submitted ? 'yes' : 'no'].concat(its.map(it => { const g = gr(s.email, it.id); return g && typeof g.score === 'number' ? g.score : ''; }), [r && r.submitted ? totalFor(s.email) : ''])); });
+  const rows = [['Student', 'Email', 'Submitted'].concat(['Watched (s)', 'Video length (s)', 'Times left page', 'Seconds away', 'Speeds used'], its.map((it, i) => 'Q' + (i + 1) + ' (' + it.points + ')'), ['Total (' + maxTotal() + ')'])];
+  students().forEach(s => { const r = G.byEmail[s.email]; rows.push([s.name, s.email, r && r.submitted ? 'yes' : 'no'].concat(watchVals(r), its.map(it => { const g = gr(s.email, it.id); return g && typeof g.score === 'number' ? g.score : ''; }), [r && r.submitted ? totalFor(s.email) : ''])); });
   download(G.assignment.title.replace(/[^\w]+/g, '_') + '_detail.csv', csvText(rows));
 }
 </script>

@@ -12,7 +12,7 @@ const ALLOWED_DOMAINS = []; // e.g. ['siprep.org']. Empty = any Google account, 
 
 const AH = ['id', 'title', 'updated', 'published', 'json (chunks, do not edit)'];
 const RoH = ['name', 'email', 'canvas_id'];
-const ReH = ['assignment_id', 'email', 'name', 'answers_json', 'submitted', 'updated', 'max_time'];
+const ReH = ['assignment_id', 'email', 'name', 'answers_json', 'submitted', 'updated', 'max_time', 'watch_json'];
 const GH = ['assignment_id', 'email', 'item_id', 'score', 'comment', 'auto'];
 
 function doGet() {
@@ -173,7 +173,7 @@ function studentGet_(req, user, isTeacher) {
   const v = sheet_('Responses', ReH).getDataRange().getValues();
   const mine = v.slice(1).find(r => r[0] === req.id && r[1] === user.email);
   const out = { assignment: stripKeys_(JSON.parse(a.json)) };
-  if (mine) out.response = { answers: JSON.parse(mine[3] || '{}'), submitted: isTrue_(mine[4]), maxTime: Number(mine[6]) || 0 };
+  if (mine) out.response = { answers: JSON.parse(mine[3] || '{}'), submitted: isTrue_(mine[4]), maxTime: Number(mine[6]) || 0, watch: JSON.parse(mine[7] || '{}') };
   return out;
 }
 
@@ -189,6 +189,17 @@ function sanitize_(answers, a) {
   return out;
 }
 
+function sanitizeWatch_(w) {
+  w = w || {};
+  const aways = (Array.isArray(w.aways) ? w.aways : []).slice(-200).map(a => [Math.max(0, Math.round(Number(a[0]) || 0)), Math.max(0, Math.round(Number(a[1]) || 0))]);
+  const rates = {};
+  Object.keys(w.rates || {}).slice(0, 20).forEach(k => {
+    const r = Number(k), v = Number(w.rates[k]);
+    if (r > 0 && r <= 16 && v >= 0) rates[String(r)] = Math.round(v);
+  });
+  return { watched: Math.max(0, Math.round(Number(w.watched) || 0)), playable: Math.max(0, Math.round(Number(w.playable) || 0)), aways: aways, rates: rates };
+}
+
 function studentSave_(req, user, isTeacher, final) {
   if (isTeacher) return { preview: true };
   const me = readRoster_().find(s => s.email === user.email);
@@ -201,9 +212,10 @@ function studentSave_(req, user, isTeacher, final) {
     for (let r = 1; r < v.length; r++) if (v[r][0] === req.id && v[r][1] === user.email) { row = r + 1; break; }
     if (row && isTrue_(v[row - 1][4])) throw new Error('You already submitted this assignment.');
     const answers = sanitize_(req.answers, a);
-    const vals = [req.id, user.email, safe_(me.name), JSON.stringify(answers), !!final, new Date().toISOString(), Number(req.maxTime) || 0];
+    const vals = [req.id, user.email, safe_(me.name), JSON.stringify(answers), !!final, new Date().toISOString(), Number(req.maxTime) || 0, JSON.stringify(sanitizeWatch_(req.watch))];
     if (!row) row = sh.getLastRow() + 1;
-    sh.getRange(row, 1, 1, 7).setValues([vals]);
+    if (!sh.getRange(1, 8).getValue()) sh.getRange(1, 8).setValue('watch_json');
+    sh.getRange(row, 1, 1, 8).setValues([vals]);
     if (final) {
       const grades = [];
       a.items.filter(it => it.type === 'mc').forEach(it => {
@@ -237,7 +249,7 @@ function getResponses_(id) {
   const a = JSON.parse(mustFind_(id).json);
   const responses = sheet_('Responses', ReH).getDataRange().getValues().slice(1)
     .filter(r => r[0] === id)
-    .map(r => ({ email: String(r[1]), name: String(r[2]), answers: JSON.parse(r[3] || '{}'), submitted: isTrue_(r[4]), updated: String(r[5]) }));
+    .map(r => ({ email: String(r[1]), name: String(r[2]), answers: JSON.parse(r[3] || '{}'), submitted: isTrue_(r[4]), updated: String(r[5]), watch: JSON.parse(r[7] || '{}') }));
   const grades = {};
   sheet_('Grades', GH).getDataRange().getValues().slice(1).filter(r => r[0] === id).forEach(r => {
     grades[r[1] + '|' + r[2]] = { score: r[3] === '' ? null : Number(r[3]), comment: String(r[4] || ''), auto: isTrue_(r[5]) };

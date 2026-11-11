@@ -89,3 +89,9 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .gcard.todo { border-left: 4px solid #c58a00; }
 .sel-ok { color: var(--good); font-weight: 600; } .sel-bad { color: var(--bad); font-weight: 600; }
 td.todo { background: var(--warn-bg); cursor: pointer; } td.link { cursor: pointer; }
+
+/* full screen */
+#stage:fullscreen { width: 100vw; height: 100vh; aspect-ratio: auto; border-radius: 0; }
+#stage:-webkit-full-screen { width: 100vw; height: 100vh; aspect-ratio: auto; border-radius: 0; }
+#fsGate { position: absolute; inset: 0; z-index: 8; background: rgba(10, 14, 22, .94); color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .6rem; text-align: center; padding: 1rem; }
+#fsGate[hidden] { display: none; }

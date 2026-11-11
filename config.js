@@ -4,7 +4,7 @@ window.APP_CONFIG = {
   GOOGLE_CLIENT_ID: "727203278087-9p1ohsnmiplc3b8m4t28m45bcmko51li.apps.googleusercontent.com",
   DEFAULT_TEACHER: "you",
   TEACHERS: {
-    you: "https://script.google.com/macros/s/AKfycbz5QDv8v4GU7kcVxX0vgdoUHruwEeaLD4pXul4E-Ih0MpROsTX-sLapSsSRrEIEjDTT/exec",
+    you: "https://script.google.com/a/macros/siprep.org/s/AKfycbyHY37tvNuVFv2OaJc3WnsHFlxdb9rwtoUXQgT6yzXtGiNn16ESTXutz30Vqo485EHAIQ/exec",
     colleague: "https://script.google.com/a/macros/siprep.org/s/AKfycbwmI8cOYoOtA_zgWZlzNei_1erj_NBUjpIh8OWbc_tLQI3COz5snZ2BJOA0wWS9ouaz/exec"
   }
 };

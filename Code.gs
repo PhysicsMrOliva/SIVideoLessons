@@ -124,11 +124,20 @@ function mustFind_(id) {
   if (!a) throw new Error('Assignment not found.');
   return a;
 }
+// An assignment with no sections is open to everyone on the roster. Otherwise the student's roster section must match.
+function inSections_(studentSection, sections) {
+  if (!sections || !sections.length) return true;
+  const want = sections.map(x => String(x).trim().toLowerCase());
+  const whole = String(studentSection || '').trim().toLowerCase();
+  if (want.indexOf(whole) >= 0) return true;
+  return whole.split(',').map(x => x.trim()).filter(Boolean).some(m => want.indexOf(m) >= 0);
+}
+
 function listAssignments_() {
   return readAssignments_().map(a => {
-    let videoId = '';
-    try { videoId = JSON.parse(a.json).videoId || ''; } catch (e) {}
-    return { id: a.id, title: a.title, updated: a.updated, published: a.published, videoId: videoId };
+    let videoId = '', sections = [];
+    try { const j = JSON.parse(a.json); videoId = j.videoId || ''; sections = j.sections || []; } catch (e) {}
+    return { id: a.id, title: a.title, updated: a.updated, published: a.published, videoId: videoId, sections: sections };
   });
 }
 function saveAssignment_(a) {
@@ -174,7 +183,9 @@ function previewOnly_(isTeacher, user) {
 function studentGet_(req, user, isTeacher) {
   const a = mustFind_(req.id);
   if (previewOnly_(isTeacher, user)) return { assignment: stripKeys_(JSON.parse(a.json)), preview: true };
-  if (!readRoster_().some(s => s.email === user.email)) throw new Error('Your email (' + user.email + ') is not on the class roster. Ask your teacher.');
+  const me = readRoster_().find(s => s.email === user.email);
+  if (!me) throw new Error('Your email (' + user.email + ') is not on the class roster. Ask your teacher.');
+  if (!inSections_(me.section, JSON.parse(a.json).sections)) throw new Error('This assignment is not assigned to your section. Ask your teacher if you think that is a mistake.');
   if (!a.published) throw new Error('This assignment is not open yet.');
   const v = sheet_('Responses', ReH).getDataRange().getValues();
   const mine = v.slice(1).find(r => r[0] === req.id && r[1] === user.email);
@@ -211,6 +222,7 @@ function studentSave_(req, user, isTeacher, final) {
   const me = readRoster_().find(s => s.email === user.email);
   if (!me) throw new Error('Your email is not on the class roster.');
   const a = JSON.parse(mustFind_(req.id).json);
+  if (!inSections_(me.section, a.sections)) throw new Error('This assignment is not assigned to your section.');
   return withLock_(() => {
     const sh = sheet_('Responses', ReH);
     const v = sh.getDataRange().getValues();

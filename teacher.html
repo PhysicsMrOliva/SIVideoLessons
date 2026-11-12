@@ -75,6 +75,7 @@
                 <option value="2">2x (no limit)</option>
               </select></label></div>
             <div style="margin-top:.5rem"><label class="inline"><input type="checkbox" id="fs"> Require full screen (iPad and computers; skipped on phones)</label></div>
+            <div style="margin-top:.6rem" id="secBox"></div>
             <p class="small" id="saveMsg"></p>
             <div id="linkBox" class="small" hidden>Student link: <input type="text" id="linkIn" readonly onclick="this.select()"> <button class="small" onclick="copyLink()">Copy</button></div>
           </div>
@@ -123,7 +124,7 @@
 <script src="config.js"></script>
 <script src="shared.js"></script>
 <script>
-let gSection = '', A = null, G = null, yt = null, cutFrom = null, tab = 'list', gView = 'summary';
+let rosterCache = [], gSection = '', A = null, G = null, yt = null, cutFrom = null, tab = 'list', gView = 'summary';
 
 // ---------- sign in & tabs ----------
 startSignIn($('gbtn'), async prof => {
@@ -153,7 +154,7 @@ async function loadList() {
     LIST = (await api('listAssignments')).assignments;
     if (!LIST.length) { $('listBody').innerHTML = '<div class="card">No assignments yet. Choose New assignment to make one.</div>'; return; }
     $('listBody').innerHTML = LIST.map(a => '<div class="card row spread"><div><strong>' + esc(a.title) + '</strong> ' +
-      (a.published ? '<span class="tag">open</span>' : '<span class="tag">draft</span>') +
+      (a.published ? '<span class="tag">open</span>' : '<span class="tag">draft</span>') + (a.sections && a.sections.length ? ' <span class="tag">' + esc(a.sections.join(', ')) + '</span>' : '') +
       '<div class="small muted">Edited ' + esc(new Date(a.updated).toLocaleString()) + '</div></div><div class="row">' +
       '<button onclick="editA(\'' + a.id + '\')">Edit</button><button onclick="gradeA(\'' + a.id + '\')">Grade</button>' +
       '<button onclick="copyLinkFor(\'' + a.id + '\')">Copy link</button><button class="danger" onclick="delA(\'' + a.id + '\')">Delete</button></div></div>').join('');
@@ -167,12 +168,14 @@ async function delA(id) { if (confirm('Delete this assignment? Student responses
 $('newBtn').onclick = () => { newAssignment(); showTab('build'); };
 
 // ---------- build ----------
-function newAssignment() { A = { id: null, title: 'Untitled assignment', videoId: '', cuts: [], items: [], published: false, maxSpeed: 2, fullscreen: false }; initBuild(); }
+function newAssignment() { A = { id: null, title: 'Untitled assignment', videoId: '', cuts: [], items: [], published: false, maxSpeed: 2, fullscreen: false, sections: [] }; initBuild(); }
 async function initBuild() {
   $('title').value = A.title; $('pub').checked = !!A.published; $('maxSpeed').value = String(A.maxSpeed || 2); $('fs').checked = !!A.fullscreen; $('vurl').value = A.videoId ? 'https://youtu.be/' + A.videoId : '';
   $('linkBox').hidden = !A.id; if (A.id) $('linkIn').value = linkFor(A.id);
   $('saveMsg').textContent = ''; cutFrom = null; $('cutMsg').textContent = '';
-  renderEditor();
+  A.sections = A.sections || [];
+  renderEditor(); renderSections();
+  api('getRoster').then(r => { rosterCache = r.roster; renderSections(); }).catch(() => {});
   if (A.videoId) await loadVideo(A.videoId);
 }
 async function loadVideo(id) {
@@ -192,6 +195,15 @@ $('maxSpeed').onchange = e => A.maxSpeed = Number(e.target.value);
 $('fs').onchange = e => A.fullscreen = e.target.checked;
 setInterval(() => { if (yt && yt.getCurrentTime && tab === 'build') $('now').textContent = fmt(yt.getCurrentTime()); }, 300);
 const nowT = () => (yt && yt.getCurrentTime) ? Math.floor(yt.getCurrentTime()) : 0;
+
+const secParts = s => String(s || '').split(',').map(x => x.trim()).filter(Boolean);
+function renderSections() {
+  const all = [...new Set([].concat(...rosterCache.map(s => secParts(s.section)), A.sections || []))].sort();
+  $('secBox').innerHTML = all.length
+    ? '<div class="small muted" style="margin-bottom:.2rem">Assign to these sections (leave all unticked for everyone):</div>' + all.map(x => '<label class="inline" style="margin-right:1rem"><input type="checkbox" data-s="' + esc(x) + '" ' + (A.sections.includes(x) ? 'checked' : '') + ' onchange="toggleSection(this.dataset.s, this.checked)"> ' + esc(x) + '</label>').join('')
+    : '<span class="small muted">Everyone on the roster can open this. Add sections on the Roster tab to assign by section.</span>';
+}
+function toggleSection(s, on) { A.sections = on ? [...new Set([...(A.sections || []), s])] : (A.sections || []).filter(x => x !== s); }
 
 function addItem(type) {
   if (!A.videoId) return flash($('saveMsg'), 'Load a video first.', 'err');
@@ -354,8 +366,9 @@ async function loadGrading(id) {
 }
 const gr = (email, id) => G.grades[email + '|' + id];
 const scorable = () => G.assignment.items.filter(i => i.type !== 'note');
-const students = () => G.roster.filter(s => !gSection || s.section === gSection).sort((a, b) => a.name.localeCompare(b.name));
-const sections = () => [...new Set(G.roster.map(s => s.section).filter(Boolean))].sort();
+const inAssigned = s => { const w = (G.assignment.sections || []).map(x => x.toLowerCase()); return !w.length || secParts(s.section).some(p => w.includes(p.toLowerCase())); };
+const students = () => G.roster.filter(s => inAssigned(s) && (!gSection || secParts(s.section).includes(gSection))).sort((a, b) => a.name.localeCompare(b.name));
+const sections = () => [...new Set([].concat(...G.roster.filter(inAssigned).map(s => secParts(s.section))))].sort();
 function totalFor(email) { let t = 0; scorable().forEach(i => { const g = gr(email, i.id); if (g && typeof g.score === 'number') t += g.score; }); return t; }
 const maxTotal = () => scorable().reduce((s, i) => s + (Number(i.points) || 0), 0);
 function needsGrade(email, it) { const r = G.byEmail[email]; return r && r.submitted && r.answers[it.id] !== undefined && (!gr(email, it.id) || gr(email, it.id).score === null); }
@@ -387,7 +400,7 @@ function watchVals(r) { if (!r) return ['', '', '', '', '']; const w = awayInfo(
 
 function summaryHtml() {
   const its = scorable(), mx = maxTotal();
-  let h = '<div class="card"><div class="row spread"><div><strong>' + esc(G.assignment.title) + '</strong><div class="small muted">' + students().filter(s => G.byEmail[s.email] && G.byEmail[s.email].submitted).length + ' of ' + students().length + ' submitted. Out of ' + mx + ' points. Speed limit: ' + (G.assignment.maxSpeed || 2) + '×.' + (G.assignment.fullscreen ? ' Full screen required.' : '') + '</div></div></div>' +
+  let h = '<div class="card"><div class="row spread"><div><strong>' + esc(G.assignment.title) + '</strong><div class="small muted">' + students().filter(s => G.byEmail[s.email] && G.byEmail[s.email].submitted).length + ' of ' + students().length + ' submitted. Out of ' + mx + ' points. Speed limit: ' + (G.assignment.maxSpeed || 2) + '×.' + ((G.assignment.sections || []).length ? ' Assigned to: ' + esc(G.assignment.sections.join(', ')) + '.' : '') + (G.assignment.fullscreen ? ' Full screen required.' : '') + '</div></div></div>' +
     '<div class="row" style="margin-top:.6rem"><label class="inline">Canvas column name <input type="text" id="cvHead" style="width:18rem" value="' + esc(G.assignment.title) + '"></label>' +
     '<button class="primary" onclick="exportCanvas()">Download Canvas CSV' + (gSection ? ' (' + esc(gSection) + ')' : '') + '</button><button onclick="exportDetail()">Download detailed CSV' + (gSection ? ' (' + esc(gSection) + ')' : '') + '</button></div>' +
     '<p class="small muted">For Canvas, export your gradebook once, copy the assignment column name exactly (it looks like "Title (123456)"), and paste it in the box above.</p></div>';

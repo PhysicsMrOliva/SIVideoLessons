@@ -98,6 +98,7 @@
     <div id="t-roster" hidden>
       <div class="card">
         <h2>Class roster</h2>
+        <p class="small muted" style="margin-top:0">Option 1: a formatted roster (below). Option 2: a full Canvas gradebook export (the next card).</p>
         <p class="muted">One student per line: <code>name, email, canvas_id, section</code>. Canvas ID and section are optional, but keep the commas (for example <code>Ada Lovelace, ada@school.org, , Period 2</code>). Only students on this list can open assignments. You can also upload a CSV.</p>
         <textarea id="rText" rows="12" placeholder="Ada Lovelace, ada@school.org, 12345, Period 2"></textarea>
         <div class="row" style="margin-top:.6rem">
@@ -105,6 +106,15 @@
           <button class="primary" id="rSave">Save roster</button>
           <span id="rMsg" class="small"></span>
         </div>
+      </div>
+      <div class="card">
+        <h3>Or import a full Canvas gradebook</h3>
+        <p class="muted">In Canvas, go to Grades > Export > Export Entire Gradebook, then choose that CSV here. The file is read in your browser and nothing is uploaded. Only name, ID, login and section are kept, and the result appears in the box above for you to check before you save. Saving replaces the whole roster.</p>
+        <div class="row">
+          <label class="inline">Email domain: @ <input type="text" id="cvDomain" value="siprep.org" style="width:12rem"></label>
+          <label class="inline"><input type="checkbox" id="cvFlip"> Change "Last, First" to "First Last"</label>
+        </div>
+        <div class="row" style="margin-top:.6rem"><input type="file" id="cvFile" accept=".csv,text/csv"><span id="cvMsg" class="small"></span></div>
       </div>
     </div>
   </section>
@@ -283,6 +293,35 @@ $('rSave').onclick = async () => {
   }
   const roster = rows.map(r => ({ name: r[0] || '', email: (r[1] || '').toLowerCase(), canvasId: r[2] || '', section: r[3] || '' })).filter(s => /@/.test(s.email));
   try { const r = await api('saveRoster', { roster }); flash($('rMsg'), 'Saved ' + r.count + ' students.', 'ok'); } catch (e) { flash($('rMsg'), e.message, 'err'); }
+};
+
+// Canvas gradebook export -> roster lines (name, ID, SIS Login ID + domain, Section)
+$('cvFile').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try {
+    const rows = parseCsv((await f.text()).replace(/^\uFEFF/, ''));
+    const hi = rows.findIndex(r => r.some(c => c.toLowerCase() === 'sis login id') && r.some(c => c.toLowerCase() === 'student'));
+    if (hi < 0) throw new Error('That does not look like a Canvas gradebook export. It needs "Student" and "SIS Login ID" columns.');
+    const h = rows[hi].map(c => c.toLowerCase());
+    const ci = { name: h.indexOf('student'), id: h.indexOf('id'), login: h.indexOf('sis login id'), sec: h.indexOf('section') };
+    const dom = $('cvDomain').value.trim().replace(/^@/, '');
+    if (!dom) throw new Error('Enter the email domain first, for example siprep.org.');
+    const seen = new Set(), out = []; let skipped = 0;
+    rows.slice(hi + 1).forEach(r => {
+      let name = (r[ci.name] || '').trim();
+      if (!name || /points possible/i.test(name) || /^(student, test|test student)$/i.test(name)) return;
+      const login = (r[ci.login] || '').trim().toLowerCase();
+      if (!login) { skipped++; return; }
+      const email = login.includes('@') ? login : login + '@' + dom;
+      if (seen.has(email)) return; seen.add(email);
+      if ($('cvFlip').checked && name.includes(',')) { const i = name.indexOf(','); name = name.slice(i + 1).trim() + ' ' + name.slice(0, i).trim(); }
+      out.push([name, email, ci.id >= 0 ? (r[ci.id] || '').trim() : '', ci.sec >= 0 ? (r[ci.sec] || '').trim() : '']);
+    });
+    $('rText').value = out.map(r => r.map(csvCell).join(', ')).join('\n');
+    if (!out.length) throw new Error('No students had a SIS Login ID, so nothing was loaded.');
+    flash($('cvMsg'), 'Loaded ' + out.length + ' students into the box above' + (skipped ? ' (' + skipped + ' skipped for a blank SIS Login ID)' : '') + '. Check them, then choose Save roster.', 'ok');
+  } catch (err) { flash($('cvMsg'), err.message, 'err'); }
+  e.target.value = '';
 };
 
 // ---------- grading ----------

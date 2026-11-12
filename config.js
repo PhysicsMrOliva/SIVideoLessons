@@ -5,7 +5,7 @@ window.APP_CONFIG = {
   DEFAULT_TEACHER: "you",
   TEACHERS: {
     you: "https://script.google.com/macros/s/AKfycbz2HIEANy1MajAq-QJ1-Tr3aypbOSp4OQYAR66oLY8CSO-EsHWOAzeOF0KpFMG7ToYizQ/exec",
-    calac: "https://script.google.com/macros/s/AKfycbxMbtrwBqw-BBr9UUIPcODW5_PsNiIDAL5X5d7uXAoZdStWT5Jp0S_RyJGT4AJW7Ad9/exec"
+    calac: "https://script.google.com/macros/s/AKfycbypjKGtaKx5rHO_McorHKQ_Gu92Om77v3_WaqDJCdTKHmugmr0emOqASiKNElT959kX/exec"
     
   }
 };

@@ -98,7 +98,7 @@
     <div id="t-roster" hidden>
       <div class="card">
         <h2>Class roster</h2>
-        <p class="small muted" style="margin-top:0">Option 1: a formatted roster (below). Option 2: a full Canvas gradebook export (the next card).</p>
+        <p class="small muted" style="margin-top:0">Option 1: a formatted roster (below). Option 2: a full Canvas gradebook export (the next card). A Canvas gradebook chosen with either file button is converted automatically.</p>
         <p class="muted">One student per line: <code>name, email, canvas_id, section</code>. Canvas ID and section are optional, but keep the commas (for example <code>Ada Lovelace, ada@school.org, , Period 2</code>). Only students on this list can open assignments. You can also upload a CSV.</p>
         <textarea id="rText" rows="12" placeholder="Ada Lovelace, ada@school.org, 12345, Period 2"></textarea>
         <div class="row" style="margin-top:.6rem">
@@ -264,13 +264,13 @@ $('saveBtn').onclick = async () => {
 };
 
 // ---------- roster ----------
-function parseCsv(text) {
+function parseCsv(text, d = ',') {
   const rows = []; let row = [], cur = '', q = false;
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
     if (q) { if (c === '"' && text[i + 1] === '"') { cur += '"'; i++; } else if (c === '"') q = false; else cur += c; }
-    else if (c === '"') q = true;
-    else if (c === ',') { row.push(cur); cur = ''; }
+    else if (c === '"' && cur.trim() === '') { q = true; cur = ''; }   // a quote only opens a quoted field at the start of a field
+    else if (c === d) { row.push(cur); cur = ''; }
     else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; row.push(cur); cur = ''; if (row.some(x => x.trim())) rows.push(row); row = []; }
     else cur += c;
   }
@@ -283,7 +283,13 @@ function download(name, text) { const a = document.createElement('a'); a.href = 
 async function loadRoster() {
   try { const r = (await api('getRoster')).roster; $('rText').value = r.map(s => [s.name, s.email, s.canvasId, s.section].map(csvCell).join(', ')).join('\n'); flash($('rMsg'), r.length + ' students'); } catch (e) { flash($('rMsg'), e.message, 'err'); }
 }
-$('rFile').onchange = async e => { const f = e.target.files[0]; if (f) $('rText').value = await f.text(); };
+$('rFile').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  const text = await f.text();
+  if (looksCanvas(text)) { try { importCanvas(text, $('rMsg')); } catch (err) { flash($('rMsg'), err.message, 'err'); } }
+  else $('rText').value = text;
+  e.target.value = '';
+};
 $('rSave').onclick = async () => {
   let rows = parseCsv($('rText').value);
   if (rows.length && !/@/.test(rows[0].join(' '))) {      // header row
@@ -296,31 +302,36 @@ $('rSave').onclick = async () => {
 };
 
 // Canvas gradebook export -> roster lines (name, ID, SIS Login ID + domain, Section)
+function looksCanvas(text) { const head = text.slice(0, 3000); return /sis login id/i.test(head) && /student/i.test(head); }
+function importCanvas(text, msgEl) {
+  text = text.replace(/^\uFEFF/, '');
+  const first = text.split(/\r?\n/)[0];
+  const delim = (first.match(/\t/g) || []).length > (first.match(/,/g) || []).length ? '\t' : ',';   // Canvas files are comma-separated; tab-separated copies work too
+  const rows = parseCsv(text, delim);
+  const hi = rows.findIndex(r => r.some(c => c.toLowerCase() === 'sis login id') && r.some(c => c.toLowerCase() === 'student'));
+  if (hi < 0) throw new Error('That does not look like a Canvas gradebook export. It needs "Student" and "SIS Login ID" columns.');
+  const h = rows[hi].map(c => c.toLowerCase());
+  const ci = { name: h.indexOf('student'), id: h.indexOf('id'), login: h.indexOf('sis login id'), sec: h.indexOf('section') };
+  const dom = $('cvDomain').value.trim().replace(/^@/, '');
+  if (!dom) throw new Error('Enter the email domain first, for example siprep.org.');
+  const seen = new Set(), out = []; let skipped = 0;
+  rows.slice(hi + 1).forEach(r => {
+    let name = (r[ci.name] || '').trim();
+    if (!name || /points possible/i.test(name) || /^(student, test|test student)$/i.test(name)) return;
+    const login = (r[ci.login] || '').trim().toLowerCase();
+    if (!login) { skipped++; return; }
+    const email = login.includes('@') ? login : login + '@' + dom;
+    if (seen.has(email)) return; seen.add(email);
+    if ($('cvFlip').checked && name.includes(',')) { const i = name.indexOf(','); name = name.slice(i + 1).trim() + ' ' + name.slice(0, i).trim(); }
+    out.push([name, email, ci.id >= 0 ? (r[ci.id] || '').trim() : '', ci.sec >= 0 ? (r[ci.sec] || '').trim() : '']);
+  });
+  if (!out.length) throw new Error('No students had a SIS Login ID, so nothing was loaded.');
+  $('rText').value = out.map(r => r.map(csvCell).join(', ')).join('\n');
+  flash(msgEl, 'Converted the Canvas gradebook: ' + out.length + ' students are in the box above' + (skipped ? ' (' + skipped + ' skipped for a blank SIS Login ID)' : '') + '. Check them, then choose Save roster.', 'ok');
+}
 $('cvFile').onchange = async e => {
   const f = e.target.files[0]; if (!f) return;
-  try {
-    const rows = parseCsv((await f.text()).replace(/^\uFEFF/, ''));
-    const hi = rows.findIndex(r => r.some(c => c.toLowerCase() === 'sis login id') && r.some(c => c.toLowerCase() === 'student'));
-    if (hi < 0) throw new Error('That does not look like a Canvas gradebook export. It needs "Student" and "SIS Login ID" columns.');
-    const h = rows[hi].map(c => c.toLowerCase());
-    const ci = { name: h.indexOf('student'), id: h.indexOf('id'), login: h.indexOf('sis login id'), sec: h.indexOf('section') };
-    const dom = $('cvDomain').value.trim().replace(/^@/, '');
-    if (!dom) throw new Error('Enter the email domain first, for example siprep.org.');
-    const seen = new Set(), out = []; let skipped = 0;
-    rows.slice(hi + 1).forEach(r => {
-      let name = (r[ci.name] || '').trim();
-      if (!name || /points possible/i.test(name) || /^(student, test|test student)$/i.test(name)) return;
-      const login = (r[ci.login] || '').trim().toLowerCase();
-      if (!login) { skipped++; return; }
-      const email = login.includes('@') ? login : login + '@' + dom;
-      if (seen.has(email)) return; seen.add(email);
-      if ($('cvFlip').checked && name.includes(',')) { const i = name.indexOf(','); name = name.slice(i + 1).trim() + ' ' + name.slice(0, i).trim(); }
-      out.push([name, email, ci.id >= 0 ? (r[ci.id] || '').trim() : '', ci.sec >= 0 ? (r[ci.sec] || '').trim() : '']);
-    });
-    $('rText').value = out.map(r => r.map(csvCell).join(', ')).join('\n');
-    if (!out.length) throw new Error('No students had a SIS Login ID, so nothing was loaded.');
-    flash($('cvMsg'), 'Loaded ' + out.length + ' students into the box above' + (skipped ? ' (' + skipped + ' skipped for a blank SIS Login ID)' : '') + '. Check them, then choose Save roster.', 'ok');
-  } catch (err) { flash($('cvMsg'), err.message, 'err'); }
+  try { importCanvas(await f.text(), $('cvMsg')); } catch (err) { flash($('cvMsg'), err.message, 'err'); }
   e.target.value = '';
 };
 

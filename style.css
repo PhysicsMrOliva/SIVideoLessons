@@ -97,7 +97,7 @@ td.todo { background: var(--warn-bg); cursor: pointer; } td.link { cursor: point
 #fsGate[hidden] { display: none; }
 
 /* logo */
-.logo { height: 30px; width: auto; display: block; }
-.logo-lg { height: 76px; width: auto; display: block; margin: 0 auto .6rem; }
+.logo { height: 26px; width: auto; display: block; }
+.logo-lg { height: 52px; width: auto; display: block; margin: 0 auto .6rem; }
 .logos { display: flex; justify-content: center; align-items: center; gap: 1rem; margin-bottom: .6rem; }
 .logos .logo-lg { margin: 0; }

@@ -4,21 +4,23 @@
  * Deploy > New deployment > Web app (Execute as: Me, Who has access: Anyone).
  */
 
+
 // ---- SETTINGS: edit these three ----------------------------------------
-const CLIENT_ID = 'PASTE_YOUR_CLIENT_ID.apps.googleusercontent.com';
-const TEACHER_EMAIL = 'you@yourschool.org';
-const ALLOWED_DOMAINS = []; // e.g. ['siprep.org']. Empty = any Google account, but the roster is still required.
+const CLIENT_ID = '727203278087-9p1ohsnmiplc3b8m4t28m45bcmko51li.apps.googleusercontent.com';
+const TEACHER_EMAIL = 'moliva@siprep.org';
+const ALLOWED_DOMAINS = ['siprep.org', 'gmail.com']; // e.g. ['siprep.org']. Empty = any Google account, but the roster is still required.
 // ------------------------------------------------------------------------
+
 
 const AH = ['id', 'title', 'updated', 'published', 'json (chunks, do not edit)'];
 const RoH = ['name', 'email', 'canvas_id'];
 const ReH = ['assignment_id', 'email', 'name', 'answers_json', 'submitted', 'updated', 'max_time', 'watch_json'];
 const GH = ['assignment_id', 'email', 'item_id', 'score', 'comment', 'auto'];
-
+ 
 function doGet() {
   return ContentService.createTextOutput('Video Quiz backend is running.');
 }
-
+ 
 function doPost(e) {
   let out;
   try {
@@ -31,9 +33,9 @@ function doPost(e) {
   }
   return ContentService.createTextOutput(JSON.stringify(out)).setMimeType(ContentService.MimeType.JSON);
 }
-
+ 
 function authErr_(msg) { const e = new Error(msg); e.code = 'AUTH'; return e; }
-
+ 
 // Verifies the Google ID token and returns {email, name}.
 function verify_(token) {
   if (!token) throw authErr_('Please sign in.');
@@ -57,7 +59,7 @@ function verify_(token) {
   cache.put(key, JSON.stringify(user), Math.max(1, Math.min(3000, exp - nowSec - 30)));
   return user;
 }
-
+ 
 function route_(req, user) {
   const isTeacher = user.email === TEACHER_EMAIL.toLowerCase();
   switch (req.action) {
@@ -88,7 +90,7 @@ function route_(req, user) {
   }
   throw new Error('Unknown action: ' + req.action);
 }
-
+ 
 // ---------- helpers ----------
 function withLock_(fn) {
   const lock = LockService.getScriptLock();
@@ -104,13 +106,13 @@ function sheet_(name, headers) {
 function safe_(s) { s = String(s == null ? '' : s); return /^[=+\-@]/.test(s) ? ' ' + s : s; }
 function chunk_(s, n) { const a = []; for (let i = 0; i < s.length; i += n) a.push(s.slice(i, i + n)); return a.length ? a : ['']; }
 function isTrue_(v) { return v === true || v === 'TRUE' || v === 'true'; }
-
+ 
 function deleteRowsWhere_(name, headers, pred) {
   const sh = sheet_(name, headers);
   const v = sh.getDataRange().getValues();
   for (let r = v.length - 1; r >= 1; r--) if (pred(v[r])) sh.deleteRow(r + 1);
 }
-
+ 
 // ---------- assignments ----------
 function readAssignments_() {
   const v = sheet_('Assignments', AH).getDataRange().getValues();
@@ -150,7 +152,7 @@ function stripKeys_(a) {
   c.items.forEach(it => { delete it.correct; delete it.sample; });
   return c;
 }
-
+ 
 // ---------- roster ----------
 function readRoster_() {
   const v = sheet_('Roster', RoH).getDataRange().getValues();
@@ -163,11 +165,16 @@ function saveRoster_(list) {
   if (rows.length) sh.getRange(2, 1, rows.length, 3).setValues(rows);
   return { count: rows.length };
 }
-
+ 
 // ---------- students ----------
+// The teacher account only previews (nothing saved) unless it is also on the roster, so it can be tested as a student.
+function previewOnly_(isTeacher, user) {
+  return isTeacher && !readRoster_().some(s => s.email === user.email);
+}
+ 
 function studentGet_(req, user, isTeacher) {
   const a = mustFind_(req.id);
-  if (isTeacher) return { assignment: stripKeys_(JSON.parse(a.json)), preview: true };
+  if (previewOnly_(isTeacher, user)) return { assignment: stripKeys_(JSON.parse(a.json)), preview: true };
   if (!readRoster_().some(s => s.email === user.email)) throw new Error('Your email (' + user.email + ') is not on the class roster. Ask your teacher.');
   if (!a.published) throw new Error('This assignment is not open yet.');
   const v = sheet_('Responses', ReH).getDataRange().getValues();
@@ -176,7 +183,7 @@ function studentGet_(req, user, isTeacher) {
   if (mine) out.response = { answers: JSON.parse(mine[3] || '{}'), submitted: isTrue_(mine[4]), maxTime: Number(mine[6]) || 0, watch: JSON.parse(mine[7] || '{}') };
   return out;
 }
-
+ 
 function sanitize_(answers, a) {
   const out = {};
   (a.items || []).forEach(it => {
@@ -188,7 +195,7 @@ function sanitize_(answers, a) {
   });
   return out;
 }
-
+ 
 function sanitizeWatch_(w) {
   w = w || {};
   const aways = (Array.isArray(w.aways) ? w.aways : []).slice(-200).map(a => [Math.max(0, Math.round(Number(a[0]) || 0)), Math.max(0, Math.round(Number(a[1]) || 0))]);
@@ -199,9 +206,9 @@ function sanitizeWatch_(w) {
   });
   return { watched: Math.max(0, Math.round(Number(w.watched) || 0)), playable: Math.max(0, Math.round(Number(w.playable) || 0)), aways: aways, rates: rates };
 }
-
+ 
 function studentSave_(req, user, isTeacher, final) {
-  if (isTeacher) return { preview: true };
+  if (previewOnly_(isTeacher, user)) return { preview: true };
   const me = readRoster_().find(s => s.email === user.email);
   if (!me) throw new Error('Your email is not on the class roster.');
   const a = JSON.parse(mustFind_(req.id).json);
@@ -228,7 +235,7 @@ function studentSave_(req, user, isTeacher, final) {
     return { saved: true };
   });
 }
-
+ 
 // ---------- grades ----------
 function writeGrades_(aid, email, list) {
   const sh = sheet_('Grades', GH);
@@ -244,7 +251,7 @@ function writeGrades_(aid, email, list) {
   });
   if (add.length) sh.getRange(sh.getLastRow() + 1, 1, add.length, 6).setValues(add);
 }
-
+ 
 function getResponses_(id) {
   const a = JSON.parse(mustFind_(id).json);
   const responses = sheet_('Responses', ReH).getDataRange().getValues().slice(1)

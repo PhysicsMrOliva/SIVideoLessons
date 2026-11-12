@@ -98,8 +98,8 @@
     <div id="t-roster" hidden>
       <div class="card">
         <h2>Class roster</h2>
-        <p class="muted">One student per line: <code>name, email, canvas_id</code>. Canvas ID is optional. Only students on this list can open assignments. You can also upload a CSV.</p>
-        <textarea id="rText" rows="12" placeholder="Ada Lovelace, ada@school.org, 12345"></textarea>
+        <p class="muted">One student per line: <code>name, email, canvas_id, section</code>. Canvas ID and section are optional, but keep the commas (for example <code>Ada Lovelace, ada@school.org, , Period 2</code>). Only students on this list can open assignments. You can also upload a CSV.</p>
+        <textarea id="rText" rows="12" placeholder="Ada Lovelace, ada@school.org, 12345, Period 2"></textarea>
         <div class="row" style="margin-top:.6rem">
           <input type="file" id="rFile" accept=".csv,text/csv,text/plain">
           <button class="primary" id="rSave">Save roster</button>
@@ -113,7 +113,7 @@
 <script src="config.js"></script>
 <script src="shared.js"></script>
 <script>
-let A = null, G = null, yt = null, cutFrom = null, tab = 'list', gView = 'summary';
+let gSection = '', A = null, G = null, yt = null, cutFrom = null, tab = 'list', gView = 'summary';
 
 // ---------- sign in & tabs ----------
 startSignIn($('gbtn'), async prof => {
@@ -271,17 +271,17 @@ const csvCell = v => { v = String(v == null ? '' : v); return /[",\n]/.test(v) ?
 const csvText = rows => rows.map(r => r.map(csvCell).join(',')).join('\r\n');
 function download(name, text) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv' })); a.download = name; a.click(); }
 async function loadRoster() {
-  try { const r = (await api('getRoster')).roster; $('rText').value = r.map(s => [s.name, s.email, s.canvasId].map(csvCell).join(', ')).join('\n'); flash($('rMsg'), r.length + ' students'); } catch (e) { flash($('rMsg'), e.message, 'err'); }
+  try { const r = (await api('getRoster')).roster; $('rText').value = r.map(s => [s.name, s.email, s.canvasId, s.section].map(csvCell).join(', ')).join('\n'); flash($('rMsg'), r.length + ' students'); } catch (e) { flash($('rMsg'), e.message, 'err'); }
 }
 $('rFile').onchange = async e => { const f = e.target.files[0]; if (f) $('rText').value = await f.text(); };
 $('rSave').onclick = async () => {
   let rows = parseCsv($('rText').value);
   if (rows.length && !/@/.test(rows[0].join(' '))) {      // header row
     const h = rows.shift().map(x => x.toLowerCase());
-    const ni = h.findIndex(x => /name/.test(x)), ei = h.findIndex(x => /mail/.test(x)), ci = h.findIndex(x => /canvas|^id$|sis/.test(x));
-    rows = rows.map(r => [r[ni >= 0 ? ni : 0], r[ei >= 0 ? ei : 1], ci >= 0 ? r[ci] : '']);
+    const ni = h.findIndex(x => /name/.test(x)), ei = h.findIndex(x => /mail/.test(x)), ci = h.findIndex(x => /canvas|^id$|sis/.test(x)), si = h.findIndex(x => /section|period|class|block/.test(x));
+    rows = rows.map(r => [r[ni >= 0 ? ni : 0], r[ei >= 0 ? ei : 1], ci >= 0 ? r[ci] : '', si >= 0 ? r[si] : '']);
   }
-  const roster = rows.map(r => ({ name: r[0] || '', email: (r[1] || '').toLowerCase(), canvasId: r[2] || '' })).filter(s => /@/.test(s.email));
+  const roster = rows.map(r => ({ name: r[0] || '', email: (r[1] || '').toLowerCase(), canvasId: r[2] || '', section: r[3] || '' })).filter(s => /@/.test(s.email));
   try { const r = await api('saveRoster', { roster }); flash($('rMsg'), 'Saved ' + r.count + ' students.', 'ok'); } catch (e) { flash($('rMsg'), e.message, 'err'); }
 };
 
@@ -304,14 +304,17 @@ async function loadGrading(id) {
 }
 const gr = (email, id) => G.grades[email + '|' + id];
 const scorable = () => G.assignment.items.filter(i => i.type !== 'note');
-const students = () => G.roster.slice().sort((a, b) => a.name.localeCompare(b.name));
+const students = () => G.roster.filter(s => !gSection || s.section === gSection).sort((a, b) => a.name.localeCompare(b.name));
+const sections = () => [...new Set(G.roster.map(s => s.section).filter(Boolean))].sort();
 function totalFor(email) { let t = 0; scorable().forEach(i => { const g = gr(email, i.id); if (g && typeof g.score === 'number') t += g.score; }); return t; }
 const maxTotal = () => scorable().reduce((s, i) => s + (Number(i.points) || 0), 0);
 function needsGrade(email, it) { const r = G.byEmail[email]; return r && r.submitted && r.answers[it.id] !== undefined && (!gr(email, it.id) || gr(email, it.id).score === null); }
 
 function renderGrade() {
-  const its = scorable();
-  const tabsH = '<div class="row" style="margin-bottom:.8rem"><button ' + (gView === 'summary' ? 'class="primary"' : '') + ' onclick="gView=\'summary\';renderGrade()">Summary</button>' +
+  const its = scorable(), secs = sections();
+  if (gSection && !secs.includes(gSection)) gSection = '';
+  const secH = secs.length ? '<label class="inline" style="margin-right:1rem">Section <select style="width:auto" onchange="gSection=this.value;renderGrade()"><option value="">All sections</option>' + secs.map(x => '<option' + (x === gSection ? ' selected' : '') + '>' + esc(x) + '</option>').join('') + '</select></label>' : '';
+  const tabsH = '<div class="row" style="margin-bottom:.8rem">' + secH + '<button ' + (gView === 'summary' ? 'class="primary"' : '') + ' onclick="gView=\'summary\';renderGrade()">Summary</button>' +
     its.map((it, i) => { const n = students().filter(s => needsGrade(s.email, it)).length; return '<button ' + (gView === it.id ? 'class="primary"' : '') + ' onclick="gView=\'' + it.id + '\';renderGrade()">Q' + (i + 1) + ' ' + (it.type === 'mc' ? '(MC)' : '(open)') + (n ? ' · ' + n + ' to grade' : '') + '</button>'; }).join('') + '</div>';
   $('gBody').innerHTML = tabsH + (gView === 'summary' ? summaryHtml() : questionHtml(its.find(i => i.id === gView)));
 }
@@ -334,15 +337,15 @@ function watchVals(r) { if (!r) return ['', '', '', '', '']; const w = awayInfo(
 
 function summaryHtml() {
   const its = scorable(), mx = maxTotal();
-  let h = '<div class="card"><div class="row spread"><div><strong>' + esc(G.assignment.title) + '</strong><div class="small muted">' + G.responses.filter(r => r.submitted).length + ' of ' + G.roster.length + ' submitted. Out of ' + mx + ' points. Speed limit: ' + (G.assignment.maxSpeed || 2) + '×.' + (G.assignment.fullscreen ? ' Full screen required.' : '') + '</div></div></div>' +
+  let h = '<div class="card"><div class="row spread"><div><strong>' + esc(G.assignment.title) + '</strong><div class="small muted">' + students().filter(s => G.byEmail[s.email] && G.byEmail[s.email].submitted).length + ' of ' + students().length + ' submitted. Out of ' + mx + ' points. Speed limit: ' + (G.assignment.maxSpeed || 2) + '×.' + (G.assignment.fullscreen ? ' Full screen required.' : '') + '</div></div></div>' +
     '<div class="row" style="margin-top:.6rem"><label class="inline">Canvas column name <input type="text" id="cvHead" style="width:18rem" value="' + esc(G.assignment.title) + '"></label>' +
-    '<button class="primary" onclick="exportCanvas()">Download Canvas CSV</button><button onclick="exportDetail()">Download detailed CSV</button></div>' +
+    '<button class="primary" onclick="exportCanvas()">Download Canvas CSV' + (gSection ? ' (' + esc(gSection) + ')' : '') + '</button><button onclick="exportDetail()">Download detailed CSV' + (gSection ? ' (' + esc(gSection) + ')' : '') + '</button></div>' +
     '<p class="small muted">For Canvas, export your gradebook once, copy the assignment column name exactly (it looks like "Title (123456)"), and paste it in the box above.</p></div>';
-  h += '<div class="card scroll"><table><tr><th>Student</th><th>Status</th><th>Watched</th><th>Speed</th><th>Left page</th>' + its.map((_, i) => '<th class="num">Q' + (i + 1) + '</th>').join('') + '<th class="num">Total</th></tr>';
+  h += '<div class="card scroll"><table><tr><th>Student</th>' + (sections().length ? '<th>Section</th>' : '') + '<th>Status</th><th>Watched</th><th>Speed</th><th>Left page</th>' + its.map((_, i) => '<th class="num">Q' + (i + 1) + '</th>').join('') + '<th class="num">Total</th></tr>';
   students().forEach(s => {
     const r = G.byEmail[s.email];
     const st = !r ? '<span class="muted">not started</span>' : r.submitted ? 'submitted' : '<span class="muted">in progress</span>';
-    h += '<tr><td>' + esc(s.name) + '</td><td>' + st + '</td>' + watchCells(r) + its.map(it => {
+    h += '<tr><td>' + esc(s.name) + '</td>' + (sections().length ? '<td>' + esc(s.section) + '</td>' : '') + '<td>' + st + '</td>' + watchCells(r) + its.map(it => {
       const g = gr(s.email, it.id);
       if (needsGrade(s.email, it)) return '<td class="num todo" onclick="gView=\'' + it.id + '\';renderGrade()">grade</td>';
       return '<td class="num">' + (g && typeof g.score === 'number' ? g.score : '') + '</td>';
@@ -397,8 +400,8 @@ function exportCanvas() {
 }
 function exportDetail() {
   const its = scorable();
-  const rows = [['Student', 'Email', 'Submitted'].concat(['Watched (s)', 'Video length (s)', 'Times left page', 'Seconds away', 'Speeds used'], its.map((it, i) => 'Q' + (i + 1) + ' (' + it.points + ')'), ['Total (' + maxTotal() + ')'])];
-  students().forEach(s => { const r = G.byEmail[s.email]; rows.push([s.name, s.email, r && r.submitted ? 'yes' : 'no'].concat(watchVals(r), its.map(it => { const g = gr(s.email, it.id); return g && typeof g.score === 'number' ? g.score : ''; }), [r && r.submitted ? totalFor(s.email) : ''])); });
+  const rows = [['Student', 'Email', 'Section', 'Submitted'].concat(['Watched (s)', 'Video length (s)', 'Times left page', 'Seconds away', 'Speeds used'], its.map((it, i) => 'Q' + (i + 1) + ' (' + it.points + ')'), ['Total (' + maxTotal() + ')'])];
+  students().forEach(s => { const r = G.byEmail[s.email]; rows.push([s.name, s.email, s.section || '', r && r.submitted ? 'yes' : 'no'].concat(watchVals(r), its.map(it => { const g = gr(s.email, it.id); return g && typeof g.score === 'number' ? g.score : ''; }), [r && r.submitted ? totalFor(s.email) : ''])); });
   download(G.assignment.title.replace(/[^\w]+/g, '_') + '_detail.csv', csvText(rows));
 }
 </script>

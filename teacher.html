@@ -100,17 +100,18 @@
       <div class="card">
         <h2>Class roster</h2>
         <p class="small muted" style="margin-top:0">Option 1: a formatted roster (below). Option 2: a full Canvas gradebook export (the next card). A Canvas gradebook chosen with either file button is converted automatically.</p>
-        <p class="muted">One student per line: <code>name, email, canvas_id, section</code>. Canvas ID and section are optional, but keep the commas (for example <code>Ada Lovelace, ada@school.org, , Period 2</code>). Only students on this list can open assignments. You can also upload a CSV.</p>
+        <p class="muted">One student per line: <code>name, email, canvas_id, section</code>. Canvas ID and section are optional, but keep the commas (for example <code>Ada Lovelace, ada@school.org, , Period 2</code>). Only students on this list can open assignments. You can also upload a CSV. <strong>Add to existing roster</strong> keeps your current students and adds the new ones (a student who is already listed is updated, and their sections are combined). <strong>Replace whole roster</strong> starts over.</p>
         <textarea id="rText" rows="12" placeholder="Ada Lovelace, ada@school.org, 12345, Period 2"></textarea>
         <div class="row" style="margin-top:.6rem">
           <input type="file" id="rFile" accept=".csv,text/csv,text/plain">
-          <button class="primary" id="rSave">Save roster</button>
+          <button class="primary" id="rAdd">Add to existing roster</button>
+          <button id="rSave" class="danger">Replace whole roster</button>
           <span id="rMsg" class="small"></span>
         </div>
       </div>
       <div class="card">
         <h3>Or import a full Canvas gradebook</h3>
-        <p class="muted">In Canvas, go to Grades > Export > Export Entire Gradebook, then choose that CSV here. The file is read in your browser and nothing is uploaded. Only name, ID, login and section are kept, and the result appears in the box above for you to check before you save. Saving replaces the whole roster.</p>
+        <p class="muted">In Canvas, go to Grades > Export > Export Entire Gradebook, then choose that CSV here. The file is read in your browser and nothing is uploaded. Only name, ID, login and section are kept, and the result appears in the box above for you to check before you save. Then choose Add to existing roster to keep your other classes.</p>
         <div class="row">
           <label class="inline">Email domain: @ <input type="text" id="cvDomain" value="siprep.org" style="width:12rem"></label>
           <label class="inline"><input type="checkbox" id="cvFlip"> Change "Last, First" to "First Last"</label>
@@ -302,16 +303,48 @@ $('rFile').onchange = async e => {
   else $('rText').value = text;
   e.target.value = '';
 };
-$('rSave').onclick = async () => {
+function mergeRoster(cur, add) {
+  const map = new Map(cur.map(s => [s.email, Object.assign({}, s)]));
+  let added = 0, updated = 0;
+  add.forEach(n => {
+    const o = map.get(n.email);
+    if (!o) { map.set(n.email, Object.assign({}, n)); added++; return; }
+    o.name = n.name || o.name;
+    o.canvasId = n.canvasId || o.canvasId;
+    o.section = [...new Set([...secParts(o.section), ...secParts(n.section)])].join(', ');   // a student in two of your classes keeps both sections
+    updated++;
+  });
+  return { roster: [...map.values()], added, updated };
+}
+function rosterFromBox() {
   let rows = parseCsv($('rText').value);
   if (rows.length && !/@/.test(rows[0].join(' '))) {      // header row
     const h = rows.shift().map(x => x.toLowerCase());
     const ni = h.findIndex(x => /name/.test(x)), ei = h.findIndex(x => /mail/.test(x)), ci = h.findIndex(x => /canvas|^id$|sis/.test(x)), si = h.findIndex(x => /section|period|class|block/.test(x));
     rows = rows.map(r => [r[ni >= 0 ? ni : 0], r[ei >= 0 ? ei : 1], ci >= 0 ? r[ci] : '', si >= 0 ? r[si] : '']);
   }
-  const roster = rows.map(r => ({ name: r[0] || '', email: (r[1] || '').toLowerCase(), canvasId: r[2] || '', section: r[3] || '' })).filter(s => /@/.test(s.email));
-  try { const r = await api('saveRoster', { roster }); flash($('rMsg'), 'Saved ' + r.count + ' students.', 'ok'); } catch (e) { flash($('rMsg'), e.message, 'err'); }
-};
+  return rows.map(r => ({ name: r[0] || '', email: (r[1] || '').toLowerCase(), canvasId: r[2] || '', section: r[3] || '' })).filter(s => /@/.test(s.email));
+}
+async function saveRoster(merge) {
+  const entered = rosterFromBox();
+  if (!entered.length) return flash($('rMsg'), 'No students found in the box. Each line needs an email address.', 'err');
+  try {
+    let msg;
+    if (merge) {
+      const m = mergeRoster((await api('getRoster')).roster, entered);
+      await api('saveRoster', { roster: m.roster });
+      msg = 'Added ' + m.added + ' new student' + (m.added === 1 ? '' : 's') + ' and updated ' + m.updated + ' existing. The roster now has ' + m.roster.length + '.';
+    } else {
+      if (!confirm('Replace the whole roster with these ' + entered.length + ' students? Anyone not listed will be removed from the roster.')) return;
+      const r = await api('saveRoster', { roster: entered });
+      msg = 'Roster replaced. It now has ' + r.count + ' students.';
+    }
+    await loadRoster();           // show what is really saved
+    flash($('rMsg'), msg, 'ok');
+  } catch (e) { flash($('rMsg'), e.message, 'err'); }
+}
+$('rAdd').onclick = () => saveRoster(true);
+$('rSave').onclick = () => saveRoster(false);
 
 // Canvas gradebook export -> roster lines (name, ID, SIS Login ID + domain, Section)
 function looksCanvas(text) { const head = text.slice(0, 3000); return /sis login id/i.test(head) && /student/i.test(head); }
@@ -339,7 +372,7 @@ function importCanvas(text, msgEl) {
   });
   if (!out.length) throw new Error('No students had a SIS Login ID, so nothing was loaded.');
   $('rText').value = out.map(r => r.map(csvCell).join(', ')).join('\n');
-  flash(msgEl, 'Converted the Canvas gradebook: ' + out.length + ' students are in the box above' + (skipped ? ' (' + skipped + ' skipped for a blank SIS Login ID)' : '') + '. Check them, then choose Save roster.', 'ok');
+  flash(msgEl, 'Converted the Canvas gradebook: ' + out.length + ' students are in the box above' + (skipped ? ' (' + skipped + ' skipped for a blank SIS Login ID)' : '') + '. Check them, then choose Add to existing roster (or Replace whole roster).', 'ok');
 }
 $('cvFile').onchange = async e => {
   const f = e.target.files[0]; if (!f) return;

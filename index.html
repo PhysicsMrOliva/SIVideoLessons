@@ -3,21 +3,25 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Video lesson</title>
+<title>SI Video Lessons</title>
+<link rel="icon" type="image/png" href="paw.png">
 <link rel="stylesheet" href="style.css">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
 <header class="top">
-  <div class="brand" id="title">Video lesson</div>
+  <div class="brand row" style="flex-wrap:nowrap"><img src="logo.png" alt="" class="logo" onerror="this.remove()"><span id="title">SI Video Lessons</span></div>
   <div class="small muted" id="who"></div>
 </header>
 <main class="narrow">
   <section id="signin" class="card center">
-    <h2>Sign in to start</h2>
-    <p class="muted">Use your school Google account.</p>
+    <div class="logos"><img src="logo.png" alt="St. Ignatius College Preparatory" class="logo-lg" onerror="this.remove()"><img src="paw.png" alt="" class="logo-lg" onerror="this.remove()"></div>
+    <h2>SI Video Lessons</h2>
+    <p class="muted">Sign in with your school Google account to begin.</p>
     <div id="gbtn" style="display:flex;justify-content:center"></div>
+    <p id="wait" class="muted" hidden>Signed in. Loading your assignment. This can take a few seconds...</p>
     <p id="msg" class="err"></p>
+    <p class="small muted">This is a new project, so signing in and submitting can sometimes be slow. If nothing seems to happen, wait a few seconds before trying again.</p>
   </section>
 
   <section id="app" hidden>
@@ -52,7 +56,7 @@ let maxSpeed = 2, A, answers = {}, furthest = 0, player, ready = false, current 
 if (!AID) { $('msg').textContent = 'This link is missing an assignment code. Ask your teacher for the link.'; }
 startSignIn($('gbtn'), async prof => {
   $('who').textContent = prof.name || prof.email;
-  $('msg').textContent = '';
+  $('msg').textContent = ''; $('wait').hidden = false;
   try {
     const d = await api('getAssignment', { id: AID });
     A = d.assignment; preview = !!d.preview;
@@ -76,7 +80,7 @@ startSignIn($('gbtn'), async prof => {
         onError: () => { $('status').innerHTML = '<span class="err">This video cannot be played here (the owner may have disabled embedding). Tell your teacher.</span>'; }
       }
     });
-  } catch (e) { $('msg').textContent = e.message; }
+  } catch (e) { $('wait').hidden = true; $('msg').textContent = e.message; }
 });
 
 function clampSpeed() {
@@ -212,9 +216,9 @@ window.addEventListener('blur', () => setTimeout(() => { const a = document.acti
 window.addEventListener('focus', back);
 
 $('submitBtn').onclick = async () => {
-  $('submitBtn').disabled = true; $('finishMsg').textContent = '';
+  $('submitBtn').disabled = true; $('submitBtn').textContent = 'Submitting... this can take a few seconds'; $('finishMsg').textContent = '';
   try { await save(true); submitted = true; $('finish').hidden = true; $('stage').hidden = true; $('done').hidden = false; $('status').textContent = ''; }
-  catch (e) { $('finishMsg').textContent = e.message; $('submitBtn').disabled = false; }
+  catch (e) { $('finishMsg').textContent = e.message; $('submitBtn').disabled = false; $('submitBtn').textContent = 'Submit assignment'; }
 };
 </script>
 </body>

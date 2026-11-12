@@ -95,3 +95,9 @@ td.todo { background: var(--warn-bg); cursor: pointer; } td.link { cursor: point
 #stage:-webkit-full-screen { width: 100vw; height: 100vh; aspect-ratio: auto; border-radius: 0; }
 #fsGate { position: absolute; inset: 0; z-index: 8; background: rgba(10, 14, 22, .94); color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .6rem; text-align: center; padding: 1rem; }
 #fsGate[hidden] { display: none; }
+
+/* logo */
+.logo { height: 30px; width: auto; display: block; }
+.logo-lg { height: 76px; width: auto; display: block; margin: 0 auto .6rem; }
+.logos { display: flex; justify-content: center; align-items: center; gap: 1rem; margin-bottom: .6rem; }
+.logos .logo-lg { margin: 0; }
